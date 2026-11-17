@@ -2,7 +2,7 @@
 
 An interactive page showing where Bitcoin sits in its 4-year halving cycle, with every past bear market lined up from its peak and a what-if projection for the next bottom and peak.
 
-**Live site:** https://collinnguyen123.github.io/BTC/
+**Live site:** https://evergreen-digital-labs.github.io/BTC/
 
 - Prices: CoinMarketCap daily data (peak = intraday high, bottom = intraday low).
 - The page is a single self-contained `index.html`.
