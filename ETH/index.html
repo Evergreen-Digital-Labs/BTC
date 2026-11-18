@@ -1,0 +1,1538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ethereum Cycle Clock</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: one dark "cycle clock" — status strip, the big log chart as the hero, controls + big numbers beside it, ledger tables below. Single dark theme by choice. */
+:root{
+  --ink:#0d1320;        /* page */
+  --panel:#141c2c;      /* raised surfaces */
+  --line:#24304a;       /* hairlines, grid */
+  --text:#e8ecf4;       /* primary text */
+  --muted:#8d99b3;      /* secondary text */
+  --btc:#f7931a;        /* accent: today + projection */
+  --bear:#ef5350;       /* drawdowns */
+  --halving:#6aa6ff;    /* halvings */
+  --good:#3fbf7f;
+  --display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body:"IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ink);color:var(--text);font-family:var(--body);font-size:15px;line-height:1.45}
+a{color:var(--halving)}
+.wrap{max-width:1240px;margin:0 auto;padding:22px 20px 40px;display:flex;flex-direction:column;gap:18px}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:10px 24px}
+h1{font-family:var(--display);font-weight:800;font-size:clamp(28px,4vw,44px);letter-spacing:-.02em;margin:0;line-height:1;text-wrap:balance}
+h1 .o{color:var(--btc)}
+.sub{color:var(--muted);margin:6px 0 0;max-width:62ch}
+.asof{font-family:var(--mono);font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:5px 11px;white-space:nowrap}
+.strip{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.strip div{background:var(--panel);padding:10px 14px;position:relative}
+.ddbtn{position:absolute;top:8px;right:10px;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);font-size:13px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;font-family:inherit}
+.ddbtn:hover,.ddbtn[aria-expanded="true"]{color:var(--btc);border-color:var(--btc)}
+#dayPanel th:nth-child(4),#dayPanel td:nth-child(4){text-align:center}
+.xpanel{max-height:0;overflow:hidden;transition:max-height .35s ease,margin .35s ease;margin:0}
+.xpanel.open{max-height:460px;margin-top:10px}
+.strip b{display:block;font-family:var(--mono);font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}
+.strip span{font-size:12px;color:var(--muted)}
+.strip .neg{color:var(--bear)}
+.strip .btc{color:var(--btc)}
+.main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:18px;align-items:start}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px}
+.chartcard{padding:12px 12px 6px}
+.charthead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;padding:2px 4px 6px}
+.charthead h2{font-family:var(--display);font-weight:700;font-size:18px;margin:0}
+.chartctl{display:flex;gap:8px;flex-wrap:wrap}
+.ctitle{padding:2px 6px 10px}
+.ctitle h2{font-family:var(--display);font-weight:700;font-size:18px;margin:0}
+.chartcard.max .chead{display:flex;align-items:center;gap:20px}
+.chartcard.max .cctl{flex:0 0 auto}
+.chartcard.max .ctitle{order:2;flex:1 1 auto;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:0 6px 6px;text-align:center}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:2px;gap:2px}
+.seg button{all:unset;cursor:pointer;font-size:12.5px;padding:5px 11px;border-radius:999px;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--btc);color:#1a1205;font-weight:600}
+.seg button:focus-visible,.chip:focus-visible,input:focus-visible,.replay:focus-visible{outline:2px solid var(--halving);outline-offset:2px}
+svg{display:block;width:100%;height:auto}
+.fsbtn{color:var(--text);border-color:var(--btc)}
+.fsinfo{display:none;font-family:var(--mono);font-size:12.5px;color:var(--btc);border:1px solid rgba(247,147,26,.45);border-radius:999px;padding:4px 11px;white-space:nowrap}
+.chartcard.max{position:fixed;inset:0;z-index:1000;border-radius:0;border:0;display:flex;flex-direction:column;padding:10px 16px 6px;background:var(--panel);margin:0}
+.chartcard.max #chart,.chartcard.max #compare{flex:1 1 0;height:0;min-height:0}
+.chartcard.max .fsinfo{display:inline-flex;flex-direction:column;align-items:center;gap:3px;border-radius:14px;padding:6px 16px}
+.fsinfo b{font-weight:600}
+.fsinfo .fshd{font-style:normal;font-family:var(--body);font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--btc);opacity:.8;margin-bottom:1px}
+.fsinfo .fsdn{color:var(--bear)}
+.fsinfo .fsup{color:var(--good)}
+.chartcard:fullscreen{width:100vw;height:100vh}
+body.fs-lock{overflow:hidden}
+.hint{font-size:11.5px;color:var(--muted);padding:2px 6px 0}
+.playbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 4px 6px}
+.seglbl{font-size:12px;color:var(--muted);padding:5px 4px 5px 9px}
+#compare [data-s]{transition:opacity .22s ease,stroke-width .22s ease}
+#compare .chit{cursor:pointer}
+#compare[data-hl] [data-s]:not(.on){opacity:.25}
+#compare[data-hl] .cline.on{stroke-width:3.2;opacity:1}
+b[data-cmp]{cursor:pointer;border-bottom:1px dashed transparent;transition:border-color .15s}
+b[data-cmp]:hover,b[data-cmp].on{border-bottom-color:currentColor}
+.tg{color:var(--good);font-weight:600}
+.tr{color:var(--bear);font-weight:600}
+.to{color:var(--btc);font-weight:700}
+tr.nowa td{background:rgba(106,166,255,.10)}
+tr.zone td{background:var(--zbg)}
+tr.zone td:first-child{box-shadow:inset 3px 0 0 rgba(239,83,80,.55)}
+tr.zone.lyou td:first-child{box-shadow:inset 3px 0 0 var(--btc)}
+tr.zone.lnow td:first-child{box-shadow:inset 3px 0 0 var(--halving)}
+.zkey{margin-left:14px;font-weight:600;letter-spacing:.04em;text-transform:none;color:var(--muted)}
+.zkey i{display:inline-block;width:34px;height:9px;border-radius:3px;margin-right:7px;vertical-align:-1px;background:linear-gradient(90deg,rgba(247,147,26,.35),rgba(239,83,80,.6))}
+tr.lgrp td{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding-top:14px;padding-bottom:6px;background:none!important;box-shadow:none!important}
+tr.lyou td:first-child{box-shadow:inset 3px 0 0 rgba(247,147,26,.6)}
+tr.lnow td:first-child{box-shadow:inset 3px 0 0 rgba(106,166,255,.6)}
+.hovt tr.lgrp:hover td{background:none}
+tr.nowa td:first-child{box-shadow:inset 3px 0 0 var(--halving)}
+.pill.pastp{color:var(--bear);border-color:rgba(239,83,80,.55);font-family:var(--body)}
+.ast{margin-left:2px}
+.tsw{display:inline-block;width:14px;height:4px;border-radius:2px;margin-right:9px;vertical-align:middle}
+#tBears tr[data-cmp]{cursor:pointer}
+#tBears tr td{transition:background .18s ease,opacity .18s ease}
+#tBears tr[data-cmp].on td{background:rgba(255,255,255,.06)}
+#tBears.hl tr:not(.on):not(:first-child) td{opacity:.45}
+#cmpCard:not(.max){position:relative}
+.cmptip{position:absolute;z-index:30;pointer-events:none;background:rgba(13,19,32,.92);border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:12px;line-height:1.3;color:var(--muted);box-shadow:0 8px 20px rgba(0,0,0,.45);white-space:nowrap}
+.cmptip[hidden]{display:none}
+.cmptip .tt{display:flex;align-items:baseline;gap:8px;font-size:15px;color:var(--text)}
+.cmptip .tt i{flex:none;width:14px;height:4px;border-radius:2px;transform:translateY(-3px)}
+.cmptip .tt b{font-weight:800}
+.cmptip .tt span{font-size:11.5px;color:var(--muted)}
+.cmptip b{font-weight:700}
+.charthead.cmphead{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:6px 4px 10px}
+.cmphead h2{grid-column:2;text-align:center;font-size:clamp(20px,2.4vw,26px);font-weight:800;letter-spacing:-.01em}
+.cmphead > div{grid-column:3;justify-self:end}
+.chartcard.max .cmphead h2{font-size:28px}
+.chartcard.max .charthead.cmphead{padding-top:26px;padding-bottom:14px}
+.secbreak{height:1px;margin:30px 0 6px;background:linear-gradient(90deg,transparent,rgba(141,153,179,.45) 10%,rgba(141,153,179,.45) 90%,transparent)}
+header.sechead{display:flex;flex-direction:column;flex-wrap:nowrap;align-items:flex-start;justify-content:flex-start;gap:6px;padding:0 4px}
+.kicker{font-size:11.5px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--btc)}
+.sectitle{font-family:var(--display);font-weight:800;font-size:clamp(24px,3vw,32px);letter-spacing:-.015em;line-height:1.1;margin:0;text-wrap:balance}
+.secsub{color:var(--muted);margin:2px 0 0;max-width:86ch;font-size:14px}
+.seckey{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px 40px;margin-top:6px;width:100%;max-width:1060px;font-size:14px;color:var(--muted)}
+.kcol{display:flex;flex-direction:column;gap:7px}
+.kh{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);opacity:.8;margin-bottom:1px}
+.ki{display:flex;align-items:baseline;gap:10px;line-height:1.4}
+.kic{flex:none;width:16px;text-align:center;color:var(--halving);font-weight:700}
+.kw{color:var(--text);font-weight:600}
+.sw{flex:none;display:inline-block;width:16px;height:4px;border-radius:2px;transform:translateY(-3px)}
+.sw.band{height:12px;transform:translateY(1px);background:rgba(247,147,26,.22);border-left:1px solid rgba(247,147,26,.5);border-right:1px solid rgba(247,147,26,.5);border-radius:2px}
+.inddot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
+.seg button[aria-pressed="true"] .inddot{box-shadow:0 0 0 1.5px #1a1205}
+.selpill{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;padding:2px;gap:2px}
+.ddwrap{position:relative;display:inline-flex}
+.ddtrig{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:8px;background:var(--btc);color:#1a1205;font-size:12.5px;font-weight:600;padding:5px 11px 5px 12px;border-radius:999px;transition:filter .15s ease}
+.ddtrig:hover{filter:brightness(1.07)}
+.ddtrig:focus-visible{outline:2px solid var(--halving);outline-offset:2px}
+.ddtrig .car{transition:transform .22s ease}
+.ddtrig[aria-expanded="true"] .car{transform:rotate(180deg)}
+.ddmenu{position:absolute;top:calc(100% + 8px);left:50%;min-width:calc(100% + 10px);box-sizing:border-box;margin:0;padding:5px;list-style:none;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 14px 34px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.02) inset;z-index:60;opacity:0;visibility:hidden;pointer-events:none;transform:translate(-50%,-6px) scale(.97);transform-origin:top center;transition:opacity .18s ease,transform .18s ease,visibility 0s linear .18s}
+.ddmenu.open{opacity:1;visibility:visible;pointer-events:auto;transform:translate(-50%,0) scale(1);transition:opacity .18s ease,transform .18s ease,visibility 0s}
+.ddmenu:focus{outline:none}
+.ddmenu li{position:relative;font-size:12.5px;padding:6px 12px 6px 26px;border-radius:8px;color:var(--muted);cursor:pointer;white-space:nowrap;font-variant-numeric:tabular-nums;transition:background .12s ease,color .12s ease}
+.ddmenu li.act{background:rgba(247,147,26,.12);color:var(--text)}
+.ddmenu li[aria-selected="true"]{color:var(--btc);font-weight:600}
+.ddmenu li[aria-selected="true"]::before{content:"";position:absolute;left:11px;top:50%;width:6px;height:6px;margin-top:-3px;border-radius:50%;background:var(--btc)}
+@media (prefers-reduced-motion:reduce){.ddmenu,.ddmenu.open,.ddtrig .car{transition:none}}
+#chart{touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+#chart text,#compare text{paint-order:stroke;stroke:var(--panel);stroke-width:3.5px;stroke-linejoin:round}
+#chart.dragging{cursor:grabbing}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted);padding:4px 6px 6px}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
+.side{display:flex;flex-direction:column;gap:14px}
+.big{padding:16px;display:grid;gap:12px}
+.big .lbl{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.big .num{font-family:var(--display);font-weight:800;font-size:34px;line-height:1.05;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.big .num.price{color:var(--btc)}
+.big .note{font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+.big .q{font-size:13px;color:var(--text);line-height:1.4;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.big .q b{color:var(--btc)}
+.big .num.past{color:var(--bear);opacity:.5}
+.seasbtn[aria-pressed="true"]{border-color:var(--btc);color:var(--btc)}
+.seasbtn[hidden]{display:none}
+.badge{display:inline-block;font-family:var(--body);font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--bear);border:1px solid var(--bear);border-radius:999px;padding:2px 8px;margin-left:8px;vertical-align:middle;text-decoration:none}
+.big .actual{font-family:var(--mono);font-size:12.5px;color:var(--text)}
+.big .actual b{color:var(--good)}
+.flag .chip{margin:6px 6px 0 0;color:var(--btc);border-color:var(--btc)}
+.big .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.big .row .num{font-size:22px}
+.flag{font-size:12.5px;border-left:3px solid var(--btc);background:rgba(247,147,26,.08);padding:8px 10px;border-radius:0 8px 8px 0;color:var(--text)}
+.flag.warn{border-color:var(--bear);background:rgba(239,83,80,.09)}
+.controls{padding:16px;display:grid;gap:16px}
+.ctl label{display:flex;justify-content:space-between;align-items:baseline;font-weight:600;font-size:13.5px;margin-bottom:6px}
+.ctl label output{font-family:var(--mono);font-weight:700;color:var(--btc);font-size:15px}
+.ctl .inrow{display:grid;grid-template-columns:1fr 86px;gap:10px;align-items:center}
+input[type=range]{width:100%;accent-color:var(--btc)}
+input[type=number],input[type=date]{width:100%;background:var(--ink);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 8px;font-family:var(--mono);font-size:13px}
+input[type=date]{color-scheme:dark}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.chip{all:unset;cursor:pointer;font-size:12px;border:1px solid var(--line);border-radius:999px;padding:4px 9px;color:var(--muted);font-family:var(--body)}
+.chip:hover{border-color:var(--btc);color:var(--text)}
+.chip.on{border-color:var(--btc);color:var(--btc)}
+.toggle{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px}
+.toggle input{accent-color:var(--btc);width:16px;height:16px}
+.sub2{display:grid;gap:14px;padding-top:4px;border-top:1px dashed var(--line)}
+.sub2[hidden]{display:none}
+.replay{all:unset;cursor:pointer;font-size:12.5px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:5px 11px}
+.replay:hover{color:var(--text);border-color:var(--muted)}
+.tables{display:grid;grid-template-columns:1fr;gap:18px}
+.tables .wide{grid-column:1/-1}
+.tcard{padding:14px 16px;position:relative}
+.tfs{position:absolute;top:12px;right:14px;z-index:2}
+.tcard.tmax{position:fixed;inset:0;z-index:1000;margin:0;border:0;border-radius:0;overflow:auto;padding:26px 40px 30px;background:var(--panel)}
+.tcard.tmax .tfs{position:fixed;top:18px;right:24px}
+.tcard.tmax{display:flex;flex-direction:column}
+.tcard.tmax::before,.tcard.tmax::after{content:"";flex:1 0 0}
+.tcard.tmax > :not(.tfs){flex-shrink:0;width:100%;max-width:1500px;margin-left:auto;margin-right:auto}
+.tcard.tmax h3{font-size:24px}
+.tcard.tmax p{font-size:15px}
+.tcard.tmax table{font-size:17px}
+.tcard.tmax th{font-size:14px}
+.tcard.tmax td,.tcard.tmax th{padding-top:12px;padding-bottom:12px}
+.tcard.tmax .tcp{font-size:40px}
+.tcard.tmax .tcd{font-size:14px}
+.tcard:fullscreen{width:100vw;height:100vh}
+.tcard h3{font-family:var(--display);font-weight:700;font-size:17px;margin:0 0 2px}
+.tcard p{margin:0 0 10px;color:var(--muted);font-size:13px}
+.tchead{display:flex;justify-content:flex-start;align-items:flex-start;gap:6px 44px;flex-wrap:wrap}
+.tcprice{text-align:left;margin-bottom:8px;padding-left:22px;border-left:1px solid var(--line)}
+.tcp{font-family:var(--mono);font-weight:700;font-size:28px;line-height:1.05;color:var(--btc);font-variant-numeric:tabular-nums}
+.tcd{font-size:12px;color:var(--muted);margin-top:3px}
+.tmk{display:inline-block;width:10px;height:10px;margin-right:10px;vertical-align:-1px;border-radius:50%;box-sizing:border-box}
+.tmk.dot-g{background:var(--good)}.tmk.dot-r{background:var(--bear)}.tmk.dot-o{background:var(--btc);box-shadow:0 0 0 3px rgba(247,147,26,.25)}
+.tmk.ring-o{border:2px solid var(--btc)}
+.tmk.dash-b{width:12px;height:0;border-radius:0;border-top:2px dashed var(--halving);vertical-align:3px}
+.hovt tr td{transition:background .18s ease,opacity .18s ease}
+.hovt:hover tr:not(:first-child):not(:hover) td{opacity:.45}
+.hovt tr:not(:first-child):hover td{background:rgba(255,255,255,.06)}
+.tscroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13.5px;font-variant-numeric:tabular-nums}
+th{text-align:left;font-weight:500;color:var(--muted);font-size:12px;border-bottom:1px solid var(--line);padding:6px 8px;white-space:nowrap}
+td{padding:7px 8px;border-bottom:1px solid rgba(36,48,74,.6);white-space:nowrap}
+td.n{font-family:var(--mono);text-align:right}
+th.n{text-align:right}
+td.neg{color:var(--bear)}
+tr.you td{background:rgba(247,147,26,.10)}
+tr.you td:first-child{box-shadow:inset 3px 0 0 var(--btc)}
+tr.now td{background:rgba(106,166,255,.08)}
+.pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted);margin-left:6px}
+.pill.btc{border-color:var(--btc);color:var(--btc)}
+footer{color:var(--muted);font-size:12.5px;max-width:95ch}
+footer b{color:var(--text);font-weight:600}
+@keyframes pulse{0%{r:6;opacity:.9}100%{r:22;opacity:0}}
+.pulse{animation:pulse 1.8s ease-out infinite}
+@media (max-width: 980px){.main{grid-template-columns:1fr}.tables{grid-template-columns:1fr}.strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (prefers-reduced-motion: reduce){.pulse{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Ethereum Cycle <span class="o">Clock</span></h1>
+      <p class="sub">Where Ether sits in the 4-year cycle (timed by Bitcoin's halvings), and where the bear market would end under the days and drawdown you choose.</p>
+    </div>
+    <div class="asof">Data: CoinMarketCap daily, Aug 7, 2015 → Nov 18, 2026</div>
+  </header>
+
+  <section class="strip" aria-label="Status today">
+    <div><b class="btc">$1,755.70</b><span>ETH now, Nov 18, 2026 (live)</span></div>
+    <div><b class="neg">−64.6%</b><span>from the $4,953.73 peak</span><button type="button" class="ddbtn" id="ddBtn" aria-expanded="false" aria-controls="ddPanel" title="Lowest point of every cycle">ⓘ</button></div>
+    <div><b class="neg">$1,506.51</b><span>lowest so far, Jun 6, 2026 (−69.6%)</span></div>
+    <div><b>Day 451</b><span>since the Aug 24, 2025 peak</span><button type="button" class="ddbtn" id="dayBtn" aria-expanded="false" aria-controls="dayPanel" title="Days from peak to bottom, every cycle">ⓘ</button></div>
+    <div><b>Day 942</b><span>since the Apr 20, 2024 BTC halving</span><button type="button" class="ddbtn" id="halvBtn" aria-expanded="false" aria-controls="halvPanel" title="Each cycle counted from Bitcoin's halving">ⓘ</button></div>
+  </section>
+
+  <div class="xwrap">
+  <section id="ddPanel" class="xpanel" aria-hidden="true">
+    <div class="card" style="padding:12px 16px">
+      <h3 style="margin:0 0 8px;font-size:13px;color:var(--muted);font-weight:600">Lowest point of each bear market, measured from its peak</h3>
+      <div class="tscroll"><table>
+        <thead><tr><th>Bear market</th><th>Peak</th><th>Lowest</th><th>Date of low</th><th>Drop</th><th>Days, peak → low</th></tr></thead>
+        <tbody>
+          <tr><td>2015 (launch crash)</td><td><span style="color:var(--good);font-weight:600">$3.54</span> (Aug 7, 2015)</td><td><span style="color:var(--bear);font-weight:600">$0.42</span></td><td>Oct 21, 2015</td><td style="color:var(--bear);font-weight:600">−88.1%</td><td>75</td></tr>
+          <tr><td>2016 (DAO bear, mid-cycle)</td><td><span style="color:var(--good);font-weight:600">$21.52</span> (Jun 17, 2016)</td><td><span style="color:var(--bear);font-weight:600">$5.98</span></td><td>Dec 6, 2016</td><td style="color:var(--bear);font-weight:600">−72.2%</td><td>172</td></tr>
+          <tr><td>2018</td><td><span style="color:var(--good);font-weight:600">$1,432.88</span> (Jan 13, 2018)</td><td><span style="color:var(--bear);font-weight:600">$82.83</span></td><td>Dec 15, 2018</td><td style="color:var(--bear);font-weight:600">−94.2%</td><td>336</td></tr>
+          <tr><td>2021–22</td><td><span style="color:var(--good);font-weight:600">$4,891.70</span> (Nov 16, 2021)</td><td><span style="color:var(--bear);font-weight:600">$896.11</span></td><td>Jun 18, 2022</td><td style="color:var(--bear);font-weight:600">−81.7%</td><td>214</td></tr>
+          <tr class="now"><td style="color:var(--btc);font-weight:700">Average of the 2 cycle bears</td><td></td><td></td><td></td><td style="color:var(--btc);font-weight:700">−88.0%</td><td style="color:var(--btc);font-weight:700">275</td></tr>
+          <tr class="you"><td><b>2025–now (this cycle)</b></td><td><span style="color:var(--good);font-weight:600">$4,953.73</span> (Aug 24, 2025)</td><td><b style="color:var(--bear)">$1,506.51</b> (so far)</td><td>Jun 6, 2026</td><td style="color:var(--bear);font-weight:700">−69.6% (so far)</td><td>286</td></tr>
+        </tbody>
+      </table></div>
+      <p style="margin:8px 0 0;font-size:11.5px;color:var(--muted)">The 2018 and 2021–22 bears are ETH's two completed 4-year-cycle bears; 2015 and 2016 came before ETH joined the cycle. This cycle's low is provisional: it counts as the bottom only if nothing lower prints before ~Dec 23, 2026.</p>
+    </div>
+  </section>
+  <section id="dayPanel" class="xpanel" aria-hidden="true">
+    <div class="card" style="padding:12px 16px">
+      <h3 style="margin:0 0 8px;font-size:13px;color:var(--muted);font-weight:600">How long each bear market took, from the cycle peak to its bottom</h3>
+      <div class="tscroll"><table>
+        <thead><tr><th>Bear market</th><th>Peak (ATH)</th><th>Bottom</th><th>Peak → bottom (days)</th><th>Months</th></tr></thead>
+        <tbody>
+          <tr><td>2015 (launch crash)</td><td><span style="color:var(--good);font-weight:600">Aug 7, 2015</span></td><td><span style="color:var(--bear);font-weight:600">Oct 21, 2015</span></td><td>75</td><td>2.5</td></tr>
+          <tr><td>2016 (DAO bear)</td><td><span style="color:var(--good);font-weight:600">Jun 17, 2016</span></td><td><span style="color:var(--bear);font-weight:600">Dec 6, 2016</span></td><td>172</td><td>5.7</td></tr>
+          <tr><td>2018</td><td><span style="color:var(--good);font-weight:600">Jan 13, 2018</span></td><td><span style="color:var(--bear);font-weight:600">Dec 15, 2018</span></td><td>336</td><td>11.0</td></tr>
+          <tr><td>2021–22</td><td><span style="color:var(--good);font-weight:600">Nov 16, 2021</span></td><td><span style="color:var(--bear);font-weight:600">Jun 18, 2022</span></td><td>214</td><td>7.0</td></tr>
+          <tr class="now"><td style="color:var(--btc);font-weight:700">Average of the 2 cycle bears</td><td></td><td></td><td style="color:var(--btc);font-weight:700">275</td><td style="color:var(--btc);font-weight:700">9.0</td></tr>
+          <tr class="you"><td><b>2025–now (this cycle)</b></td><td><span style="color:var(--good);font-weight:600">Aug 24, 2025</span></td><td><span style="color:var(--bear);font-weight:600">Jun 6, 2026</span> (so far)</td><td>286 (so far)</td><td>9.4 (so far)</td></tr>
+          <tr class="you"><td><b>Today</b></td><td><span style="color:var(--good);font-weight:600">Aug 24, 2025</span></td><td>Nov 18, 2026</td><td><b style="color:var(--btc)">451</b></td><td><b style="color:var(--btc)">14.8</b></td></tr>
+        </tbody>
+      </table></div>
+      <p style="margin:8px 0 0;font-size:11.5px;color:var(--muted)">ETH's two cycle bears bottomed 214 and 336 days after their peak. The lowest price so far came on day 286, inside that range; today is day 451, well past the longest one. Months = days ÷ 30.44.</p>
+    </div>
+  </section>
+  <section id="halvPanel" class="xpanel" aria-hidden="true">
+    <div class="card" style="padding:12px 16px">
+      <h3 style="margin:0 0 8px;font-size:13px;color:var(--muted);font-weight:600">Ether has no halving of its own, so each cycle is counted from Bitcoin's halving</h3>
+      <div class="tscroll"><table>
+        <thead><tr><th>BTC halving</th><th>Date</th><th>ETH that day</th><th>ETH peak (ATH)</th><th>ETH bottom</th><th>Days to next halving</th></tr></thead>
+        <tbody>
+          <tr><td>2nd</td><td>Jul 9, 2016</td><td>$10.97</td><td><span style="color:var(--good);font-weight:600">Jan 13, 2018</span> <span style="color:var(--muted)">(day 553)</span></td><td><span style="color:var(--bear);font-weight:600">Dec 15, 2018</span> <span style="color:var(--muted)">(day 889)</span></td><td>1,402</td></tr>
+          <tr><td>3rd</td><td>May 11, 2020</td><td>$185.91</td><td><span style="color:var(--good);font-weight:600">Nov 16, 2021</span> <span style="color:var(--muted)">(day 554)</span></td><td><span style="color:var(--bear);font-weight:600">Jun 18, 2022</span> <span style="color:var(--muted)">(day 768)</span></td><td>1,440</td></tr>
+          <tr class="now"><td style="color:var(--btc);font-weight:700">Average of the 2 completed cycles</td><td></td><td></td><td style="color:var(--btc);font-weight:700">day 554</td><td style="color:var(--btc);font-weight:700">day 829</td><td style="color:var(--btc);font-weight:700">1,421</td></tr>
+          <tr class="you"><td><b>4th (this cycle)</b></td><td>Apr 20, 2024</td><td>$3,157.63</td><td><span style="color:var(--good);font-weight:600">Aug 24, 2025</span> <span style="color:var(--muted)">(day 491)</span></td><td><span style="color:var(--bear);font-weight:600">Jun 6, 2026</span> <span style="color:var(--muted)">(day 777, so far)</span></td><td>~1,453 (est. Apr 12, 2028)</td></tr>
+          <tr class="you"><td><b>Today</b></td><td>Nov 18, 2026</td><td>$1,755.70 (live)</td><td colspan="3"><b style="color:var(--btc)">Day 942</b> since the 4th halving<span style="color:var(--muted)">, about 511 days until the 5th halving</span></td></tr>
+        </tbody>
+      </table></div>
+      <p style="margin:8px 0 0;font-size:11.5px;color:var(--muted)">ETH peaked 553 and 554 days after the 2016 and 2020 halvings; this cycle it peaked earlier, on day 491 (and 43 days before Bitcoin's own peak). The lowest price so far came on day 777, between the two earlier bottoms (768 and 889). The 1st halving (2012) came before Ether existed.</p>
+    </div>
+  </section>
+  </div>
+
+  <section class="main">
+    <div class="card chartcard" id="chartCard">
+      <div class="chead">
+      <div class="ctitle">
+        <h2 id="chartTitle">Current cycle and your projection</h2>
+        <span class="fsinfo" id="fsInfo"></span>
+      </div>
+      <div class="cctl">
+      <div class="charthead">
+        <div class="chartctl">
+          <div class="seg" role="group" aria-label="Which cycle">
+            <button type="button" id="vFull" data-view="full" aria-pressed="false">All cycles</button>
+            <button type="button" id="vC1" data-view="c1" aria-pressed="false">2015–18</button>
+            <button type="button" id="vC2" data-view="c2" aria-pressed="false">2018–22</button>
+            <button type="button" id="vCycle" data-view="cycle" aria-pressed="true">2022–now</button>
+          </div>
+          <div class="seg" role="group" aria-label="Zoom">
+            <button type="button" id="zIn" aria-label="Zoom in" title="Zoom in">+</button>
+            <button type="button" id="zOut" aria-label="Zoom out" title="Zoom out">−</button>
+            <button type="button" id="autoBtn" aria-pressed="true" title="Fit the price axis to what is on screen">Auto</button>
+          </div>
+          <button type="button" class="replay seasbtn" id="seasBtn" aria-pressed="false" title="Show the four seasons of the cycle (zoomed views)">🌦 Seasons</button>
+          <button type="button" class="replay fsbtn" id="fsBtn" aria-pressed="false" title="Full screen (F) · Esc to exit">⤢ Full screen</button>
+        </div>
+      </div>
+      <div class="playbar">
+        <button type="button" class="replay" id="replay">▶ Play the cycles from 2015</button>
+        <div class="selpill">
+          <span class="seglbl">Speed</span>
+          <span class="ddwrap">
+            <button type="button" class="ddtrig" id="speedBtn" aria-haspopup="listbox" aria-expanded="false" aria-controls="speedMenu" title="Playback speed"><span id="speedVal">1×</span><svg class="car" width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+            <ul class="ddmenu" id="speedMenu" role="listbox" aria-label="Playback speed" tabindex="-1">
+              <li role="option" data-v="0.1" aria-selected="false">0.1×</li>
+              <li role="option" data-v="0.25" aria-selected="false">0.25×</li>
+              <li role="option" data-v="0.5" aria-selected="false">0.5×</li>
+              <li role="option" data-v="0.75" aria-selected="false">0.75×</li>
+              <li role="option" data-v="1" aria-selected="true">1×</li>
+              <li role="option" data-v="1.5" aria-selected="false">1.5×</li>
+            </ul>
+          </span>
+        </div>
+        <div class="seg" role="group" aria-label="Pointer style">
+          <span class="seglbl">Pointer</span>
+          <button type="button" data-ptr="cross" aria-pressed="true" title="Dashed lines with the price and date on the axes">Crosshair</button>
+          <button type="button" data-ptr="simple" aria-pressed="false" title="Plain mouse arrow, no lines">Simple</button>
+        </div>
+        <div class="seg" role="group" aria-label="Indicators">
+          <span class="seglbl">Indicators</span>
+          <button type="button" id="wmaBtn" aria-pressed="false" title="200-week moving average: the average of the last 200 weekly closes"><i class="inddot" style="background:#fcec60"></i>200W MA</button>
+        </div>
+      </div>
+      </div>
+      </div>
+      <svg id="chart" viewBox="0 0 860 600" role="img" aria-label="Ether price on a log scale with Bitcoin halvings, bear markets, today's position and the projected bottom"></svg>
+      <div class="legend">
+        <span id="seasKey" hidden style="flex-basis:100%;color:var(--muted)">❄️ Winter = peak → bottom · 🌱 Spring = bottom → halving · ☀️ Summer = halving → price beats the old all-time high · 🍂 Fall = new all-time highs → cycle peak · Morgan Stanley's “four seasons” framework · faded bands = projected from your inputs</span>
+        <span><i style="background:var(--text)"></i>ETH closing price</span>
+        <span id="wmaKey" hidden><i style="background:#fcec60"></i>200-week moving average (200W MA)</span>
+        <span><i style="background:var(--good)"></i>Cycle all-time high</span>
+        <span><i style="background:var(--bear)"></i>Cycle winter low</span>
+        <span><i style="background:#f472b6"></i>This cycle's low so far (not confirmed)</span>
+        <span><i style="background:var(--halving)"></i>Bitcoin halving (ETH has none; its cycle follows Bitcoin's)</span>
+        <span><i style="background:var(--bear);opacity:.6"></i>Bear market</span>
+        <span><i style="background:var(--btc)"></i>Your projection (illustrative path)</span>
+        <span><i style="background:rgba(247,147,26,.35)"></i>Past bottom window (peak + 214–336 days)</span>
+      </div>
+    </div>
+
+    <aside class="side">
+      <div class="card big" aria-live="polite">
+        <div class="q" id="bQ">If this bear market lasts <b>275 days</b> from the Aug 24, 2025 peak (the average of the last 2), and falls <b>75%</b>:</div>
+        <div>
+          <div class="lbl" id="bLbl">The bottom would be on</div>
+          <div class="num" id="bDate">May 26, 2026</div>
+          <div class="note" id="bDays">—</div>
+        </div>
+        <div>
+          <div class="lbl" id="bpLbl">At a price of</div>
+          <div class="num price" id="bPrice">$1,238.43</div>
+          <div class="note" id="bVs">—</div>
+        </div>
+        <div class="row" id="peakBig">
+          <div><div class="lbl">Next peak date</div><div class="num" id="pDate">—</div></div>
+          <div><div class="lbl">Next peak price</div><div class="num price" id="pPrice">—</div></div>
+        </div>
+        <div id="flags" style="display:grid;gap:8px"></div>
+      </div>
+
+      <div class="card controls">
+        <div class="ctl">
+          <label for="days">Days from peak to bottom <output id="daysOut">275</output></label>
+          <div class="inrow"><input type="range" id="days" min="150" max="650" step="1" value="275"><input type="number" id="daysNum" min="1" max="1500" value="275" aria-label="Days from peak to bottom"></div>
+          <div class="chips" id="dayChips">
+            <button type="button" class="chip" data-v="214">Fastest · 214</button>
+            <button type="button" class="chip" data-v="275">Avg last 2 · 275</button>
+            <button type="button" class="chip" data-v="286">Low so far · 286</button>
+            <button type="button" class="chip" data-v="336">Longest · 336</button>
+            <button type="button" class="chip" data-v="365">1 year · 365</button>
+          </div>
+        </div>
+        <div class="ctl">
+          <label for="dd">Drawdown from the $4,953.73 peak <output id="ddOut">−75.0%</output></label>
+          <div class="inrow"><input type="range" id="dd" min="30" max="97" step="0.1" value="75"><input type="number" id="ddNum" min="1" max="99" step="0.1" value="75" aria-label="Drawdown percent"></div>
+          <div class="chips" id="ddChips">
+            <button type="button" class="chip" data-v="69.6">So far · −69.6%</button>
+            <button type="button" class="chip" data-v="75">−75%</button>
+            <button type="button" class="chip" data-v="81.7">2022 · −81.7%</button>
+            <button type="button" class="chip" data-v="88">Avg last 2 · −88.0%</button>
+            <button type="button" class="chip" data-v="94.2">2018 · −94.2%</button>
+          </div>
+        </div>
+        <label class="toggle"><input type="checkbox" id="showPeak"> Also project the next cycle peak</label>
+        <div class="sub2" id="peakCtl">
+          <div class="ctl">
+            <label for="halvDate">Next Bitcoin halving (estimate)</label>
+            <input type="date" id="halvDate" value="2028-04-12">
+          </div>
+          <div class="ctl">
+            <label for="hp">Days from halving to ETH peak <output id="hpOut">533</output></label>
+            <div class="inrow"><input type="range" id="hp" min="300" max="700" step="1" value="533"><input type="number" id="hpNum" min="1" max="1500" value="533" aria-label="Days from halving to peak"></div>
+            <div class="chips" id="hpChips">
+              <button type="button" class="chip" data-v="491">Fastest · 491</button>
+              <button type="button" class="chip" data-v="533">Avg all 3 · 533</button>
+              <button type="button" class="chip" data-v="554">Slowest · 554</button>
+            </div>
+          </div>
+          <div class="ctl">
+            <label for="mult">Gain from the bottom to the next peak <output id="multOut">3.0×</output></label>
+            <div class="inrow"><input type="range" id="mult" min="1.2" max="10" step="0.1" value="3"><input type="number" id="multNum" min="1" max="50" step="0.1" value="3" aria-label="Gain multiple"></div>
+            <div class="chips" id="multChips">
+              <button type="button" class="chip" data-v="2">2×</button>
+              <button type="button" class="chip" data-v="3">Trend · 3×</button>
+              <button type="button" class="chip" data-v="4">4×</button>
+              <button type="button" class="chip" data-v="5.5">Repeat 2022–25 · 5.5×</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </section>
+
+  <div class="secbreak" role="separator"></div>
+  <header class="sechead">
+    <span class="kicker">Compare the bear markets</span>
+    <h2 class="sectitle">How does this bear market stack up?</h2>
+    <div class="seckey">
+      <div class="kcol">
+        <div class="kh">How to read it</div>
+        <div class="ki"><span class="kic">◎</span><span>Every bear market starts at its own cycle peak: <b class="kw">0%, day 0</b>.</span></div>
+        <div class="ki"><span class="kic">→</span><span>Moving <b class="kw">right</b> counts the days since that peak.</span></div>
+        <div class="ki"><span class="kic">↓</span><span>Moving <b class="kw">down</b> shows how far price had fallen.</span></div>
+      </div>
+      <div class="kcol">
+        <div class="kh">What the colours mean</div>
+        <div class="ki"><i class="sw" style="background:var(--text)"></i><span><b class="kw" data-cmp="now">White line</b> = this cycle (2025–now)</span></div>
+        <div class="ki"><i class="sw" style="background:linear-gradient(90deg,#6f7c9a 0 25%,#a5b1c9 25% 50%,#c8a7f0 50% 75%,#7cc4d6 75%)"></i><span><b class="kw">Other lines</b> = past bears: <b style="color:#6f7c9a" data-cmp="2015">2015</b>, <b style="color:#a5b1c9" data-cmp="2016">2016</b>, <b style="color:#c8a7f0" data-cmp="2018">2018</b>, <b style="color:#7cc4d6" data-cmp="2021–22">2021–22</b></span></div>
+        <div class="ki"><i class="sw band"></i><span><b style="color:var(--btc)">Shaded band</b> = where ETH's two cycle bears bottomed (day 214–336)</span></div>
+        <div class="ki"><i class="sw" style="background:var(--btc)"></i><span><b style="color:var(--btc)">Orange</b> = today and your scenario</span></div>
+      </div>
+    </div>
+  </header>
+  <section class="card chartcard" id="cmpCard" aria-labelledby="cmpTitle">
+    <div class="charthead cmphead"><h2 id="cmpTitle">All bear markets, lined up from their peak</h2><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap"><button type="button" class="replay fsbtn" id="cmpFsBtn" aria-pressed="false" title="Full screen · Esc to exit">⤢ Full screen</button></div></div>
+    <svg id="compare" viewBox="0 0 860 380" role="img" aria-label="Each bear market's percentage drop from its peak plotted against days since the peak, with today's position and your scenario"></svg>
+  </section>
+
+  <section class="tables">
+    <div class="card tcard">
+      <h3>Every bear market, and yours</h3>
+      <p>Peak intraday high to bottom intraday low. Your scenario uses the inputs above.</p>
+      <div class="tscroll"><table id="tBears"></table></div>
+    </div>
+    <div class="card tcard">
+      <div class="tchead">
+        <div><h3>Projected timeline</h3>
+        <p id="tlSub">Days are counted from today, Nov 18, 2026. Prices after today come from your inputs.</p></div>
+        <div class="tcprice"><div class="tcp" id="tlPrice">—</div><div class="tcd" id="tlDate"></div></div>
+      </div>
+      <div class="tscroll"><table id="tTimeline" class="hovt"></table></div>
+    </div>
+    <div class="card tcard wide">
+      <div class="tchead">
+        <div><h3>Drawdown to price ladder</h3>
+        <p>What each drop from the Aug 24, 2025 peak <span class="tg">$4,953.73</span> means.</p></div>
+        <div class="tcprice"><div class="tcp" id="ldPrice">—</div><div class="tcd" id="ldDate"></div></div>
+      </div>
+      <div class="tscroll"><table id="tLadder" class="hovt"></table></div>
+    </div>
+  </section>
+
+  <footer>
+    <b>How this works.</b> Prices are CoinMarketCap ETH daily data (peak = intraday high, bottom = intraday low; Nov 18, 2026 = CoinMarketCap live price of $1,755.70 at 3 p.m. Toronto, not a daily close). Ether has no halving, so cycles are timed from Bitcoin's halvings, which ETH's peaks and bottoms have followed. Bottom date = Aug 24, 2025 + your days; bottom price = $4,953.73 × (1 − your drawdown). Next peak date = next Bitcoin halving + your days; next peak price = projected bottom × your gain. Curves between points are illustrative paths, not forecasts. Historical analysis for learning and teaching, not financial advice.
+  </footer>
+</div>
+
+<script>
+const DATA = {"weekly":[[2015.6023,0.7],[2015.6215,1.57],[2015.6407,1.35],[2015.6598,1.32],[2015.679,1.3],[2015.6982,0.94],[2015.7173,0.94],[2015.7365,0.72],[2015.7556,0.67],[2015.7748,0.64],[2015.794,0.52],[2015.8131,0.62],[2015.8323,1.06],[2015.8515,1.03],[2015.8706,0.91],[2015.8898,0.97],[2015.909,0.88],[2015.9281,0.84],[2015.9473,0.95],[2015.9665,0.9],[2015.9856,0.86],[2016.0055,0.97],[2016.0246,1.0],[2016.0438,1.33],[2016.063,2.14],[2016.0821,2.31],[2016.1013,2.96],[2016.1205,5.24],[2016.1396,4.65],[2016.1588,6.47],[2016.178,11.38],[2016.1971,14.48],[2016.2163,10.32],[2016.2355,10.42],[2016.2546,11.62],[2016.2738,8.94],[2016.293,9.31],[2016.3121,8.0],[2016.3313,8.85],[2016.3504,9.48],[2016.3696,9.96],[2016.3888,14.29],[2016.4079,12.35],[2016.4271,13.98],[2016.4463,15.74],[2016.4654,12.23],[2016.4846,13.85],[2016.5038,11.72],[2016.5229,10.95],[2016.5421,11.16],[2016.5613,12.75],[2016.5804,11.88],[2016.5996,10.91],[2016.6188,11.19],[2016.6379,11.18],[2016.6571,10.93],[2016.6762,11.68],[2016.6954,11.64],[2016.7146,12.43],[2016.7337,13.1],[2016.7529,13.2],[2016.7721,12.05],[2016.7912,11.95],[2016.8104,12.04],[2016.8296,11.18],[2016.8487,10.87],[2016.8679,10.1],[2016.8871,9.58],[2016.9062,9.0],[2016.9254,7.44],[2016.9446,8.19],[2016.9637,7.87],[2016.9829,7.18],[2017.0,8.17],[2017.0192,10.29],[2017.0383,9.9],[2017.0575,10.7],[2017.0767,10.48],[2017.0958,11.35],[2017.115,11.4],[2017.1342,12.76],[2017.1533,14.52],[2017.1725,19.3],[2017.1916,23.44],[2017.2108,44.74],[2017.23,50.52],[2017.2491,48.75],[2017.2683,43.27],[2017.2875,48.72],[2017.3066,48.49],[2017.3258,79.02],[2017.345,94.01],[2017.3641,90.79],[2017.3833,157.94],[2017.4025,170.51],[2017.4216,245.33],[2017.4408,340.61],[2017.46,371.46],[2017.4791,303.25],[2017.4983,287.99],[2017.5175,242.14],[2017.5366,157.36],[2017.5558,225.95],[2017.5749,197.98],[2017.5941,261.57],[2017.6133,298.06],[2017.6324,301.43],[2017.6516,347.89],[2017.6708,347.48],[2017.6899,288.75],[2017.7091,251.75],[2017.7283,282.48],[2017.7474,302.34],[2017.7666,308.61],[2017.7858,336.6],[2017.8049,295.45],[2017.8241,305.09],[2017.8433,296.26],[2017.8624,307.91],[2017.8816,354.39],[2017.9008,471.33],[2017.9199,465.85],[2017.9391,441.72],[2017.9582,719.97],[2017.9774,694.15],[2017.9966,756.73],[2018.0164,1153.17],[2018.0356,1366.77],[2018.0548,1049.58],[2018.0739,1246.01],[2018.0931,834.68],[2018.1123,814.66],[2018.1314,923.92],[2018.1506,844.81],[2018.1697,866.68],[2018.1889,723.34],[2018.2081,538.64],[2018.2272,524.29],[2018.2464,379.61],[2018.2656,400.51],[2018.2847,531.7],[2018.3039,621.86],[2018.3231,688.88],[2018.3422,792.31],[2018.3614,733.5],[2018.3806,715.37],[2018.3997,572.67],[2018.4189,618.33],[2018.4381,526.48],[2018.4572,500.45],[2018.4764,457.67],[2018.4956,453.92],[2018.5147,489.12],[2018.5339,449.85],[2018.553,459.66],[2018.5722,466.67],[2018.5914,410.52],[2018.6105,319.57],[2018.6297,300.83],[2018.6489,275.2],[2018.668,294.37],[2018.6872,196.92],[2018.7064,220.59],[2018.7255,244.33],[2018.7447,232.85],[2018.7639,226.12],[2018.783,195.72],[2018.8022,205.14],[2018.8214,205.37],[2018.8405,207.49],[2018.8597,211.34],[2018.8789,177.07],[2018.898,116.45],[2018.9172,116.39],[2018.9363,95.14],[2018.9555,85.26],[2018.9747,130.77],[2018.9938,139.86],[2019.0137,157.75],[2019.0329,116.9],[2019.052,119.47],[2019.0712,113.41],[2019.0903,107.49],[2019.1095,124.81],[2019.1287,133.6],[2019.1478,135.85],[2019.167,132.25],[2019.1862,136.76],[2019.2053,140.0],[2019.2245,136.99],[2019.2437,141.51],[2019.2628,174.53],[2019.282,167.84],[2019.3012,170.05],[2019.3203,157.3],[2019.3395,163.45],[2019.3587,187.33],[2019.3778,261.29],[2019.397,267.07],[2019.4162,270.23],[2019.4353,233.09],[2019.4545,269.22],[2019.4736,307.83],[2019.4928,290.7],[2019.512,305.7],[2019.5311,227.58],[2019.5503,225.63],[2019.5695,211.19],[2019.5886,222.67],[2019.6078,216.09],[2019.627,194.49],[2019.6461,186.84],[2019.6653,171.63],[2019.6845,181.36],[2019.7036,189.79],[2019.7228,211.55],[2019.742,170.5],[2019.7611,173.06],[2019.7803,182.08],[2019.7995,175.53],[2019.8186,184.24],[2019.8378,182.43],[2019.8569,189.48],[2019.8761,185.12],[2019.8953,142.83],[2019.9144,151.19],[2019.9336,151.26],[2019.9528,143.11],[2019.9719,132.37],[2019.9911,134.76],[2020.011,136.28],[2020.0301,145.87],[2020.0493,166.97],[2020.0684,168.08],[2020.0876,188.62],[2020.1068,228.58],[2020.1259,259.89],[2020.1451,273.75],[2020.1643,218.97],[2020.1834,200.69],[2020.2026,125.21],[2020.2218,123.32],[2020.2409,125.58],[2020.2601,143.55],[2020.2793,161.14],[2020.2984,181.61],[2020.3176,197.32],[2020.3368,210.93],[2020.3559,188.6],[2020.3751,207.16],[2020.3943,202.37],[2020.4134,230.98],[2020.4326,245.17],[2020.4517,234.11],[2020.4709,228.99],[2020.4901,225.35],[2020.5092,227.66],[2020.5284,242.13],[2020.5476,238.49],[2020.5667,309.64],[2020.5859,370.67],[2020.6051,391.12],[2020.6242,433.79],[2020.6434,391.38],[2020.6626,428.4],[2020.6817,353.36],[2020.7009,365.57],[2020.7201,371.05],[2020.7392,357.44],[2020.7584,352.58],[2020.7775,375.14],[2020.7967,378.21],[2020.8159,406.22],[2020.835,396.36],[2020.8542,453.55],[2020.8734,447.56],[2020.8925,558.07],[2020.9117,575.76],[2020.9309,601.91],[2020.95,589.66],[2020.9692,638.29],[2020.9884,682.64],[2021.0055,975.51],[2021.0246,1262.25],[2021.0438,1230.17],[2021.063,1391.61],[2021.0821,1314.99],[2021.1013,1614.23],[2021.1205,1805.08],[2021.1396,1935.6],[2021.1588,1416.05],[2021.178,1723.15],[2021.1971,1854.56],[2021.2163,1788.22],[2021.2355,1691.36],[2021.2546,2093.12],[2021.2738,2157.66],[2021.293,2237.14],[2021.3121,2316.06],[2021.3313,2952.06],[2021.3504,3928.84],[2021.3696,3587.51],[2021.3888,2109.58],[2021.4079,2390.31],[2021.4271,2715.09],[2021.4463,2508.39],[2021.4654,2246.36],[2021.4846,1978.89],[2021.5038,2321.72],[2021.5229,2139.66],[2021.5421,1895.55],[2021.5613,2191.37],[2021.5804,2561.85],[2021.5996,3013.73],[2021.6188,3310.5],[2021.6379,3242.12],[2021.6571,3227.0],[2021.6762,3952.13],[2021.6954,3410.13],[2021.7146,3329.45],[2021.7337,3062.27],[2021.7529,3418.36],[2021.7721,3425.85],[2021.7912,3847.1],[2021.8104,4087.9],[2021.8296,4288.07],[2021.8487,4620.55],[2021.8679,4626.36],[2021.8871,4269.73],[2021.9062,4294.45],[2021.9254,4198.32],[2021.9446,4134.45],[2021.9637,3922.59],[2021.9829,4067.33],[2022.0027,3829.57],[2022.0219,3157.75],[2022.0411,3350.92],[2022.0602,2535.04],[2022.0794,2603.47],[2022.0986,3057.48],[2022.1177,2883.46],[2022.1369,2628.65],[2022.1561,2621.8],[2022.1752,2555.04],[2022.1944,2518.94],[2022.2136,2860.46],[2022.2327,3291.58],[2022.2519,3522.83],[2022.271,3211.87],[2022.2902,2993.4],[2022.3094,2922.73],[2022.3285,2827.76],[2022.3477,2517.46],[2022.3669,2145.71],[2022.386,2043.17],[2022.4052,1812.03],[2022.4244,1805.2],[2022.4435,1445.22],[2022.4627,1127.66],[2022.4819,1199.83],[2022.501,1073.77],[2022.5202,1168.4],[2022.5394,1338.64],[2022.5585,1599.48],[2022.5777,1681.52],[2022.5969,1699.35],[2022.616,1936.8],[2022.6352,1619.32],[2022.6543,1430.55],[2022.6735,1577.64],[2022.6927,1761.8],[2022.7118,1335.33],[2022.731,1294.22],[2022.7502,1276.09],[2022.7693,1322.6],[2022.7885,1306.3],[2022.8077,1363.45],[2022.8268,1590.78],[2022.846,1572.23],[2022.8652,1221.82],[2022.8843,1142.47],[2022.9035,1195.13],[2022.9227,1280.26],[2022.9418,1263.87],[2022.961,1184.72],[2022.9802,1218.96],[2023.0,1200.96],[2023.0192,1287.36],[2023.0383,1552.48],[2023.0575,1628.38],[2023.0767,1646.16],[2023.0958,1631.65],[2023.115,1515.03],[2023.1342,1681.44],[2023.1533,1640.82],[2023.1725,1564.47],[2023.1916,1590.29],[2023.2108,1785.58],[2023.23,1775.68],[2023.2491,1795.71],[2023.2683,1859.39],[2023.2875,2120.01],[2023.3066,1862.06],[2023.3258,1876.92],[2023.345,1873.08],[2023.3641,1800.5],[2023.3833,1804.53],[2023.4025,1910.91],[2023.4216,1890.51],[2023.4408,1753.42],[2023.46,1720.58],[2023.4791,1900.51],[2023.4983,1937.44],[2023.5175,1863.01],[2023.5366,1923.68],[2023.5558,1889.19],[2023.5749,1861.64],[2023.5941,1827.46],[2023.6133,1839.28],[2023.6324,1684.85],[2023.6516,1657.51],[2023.6708,1636.12],[2023.6899,1616.83],[2023.7091,1622.9],[2023.7283,1580.85],[2023.7474,1733.81],[2023.7666,1633.55],[2023.7858,1558.07],[2023.8049,1663.43],[2023.8241,1795.55],[2023.8433,1894.16],[2023.8624,2045.19],[2023.8816,2013.2],[2023.9008,2063.29],[2023.9199,2193.69],[2023.9391,2352.46],[2023.9582,2196.48],[2023.9774,2265.69],[2023.9966,2281.47],[2024.0164,2222.87],[2024.0356,2472.24],[2024.0548,2453.91],[2024.0739,2257.21],[2024.0931,2289.55],[2024.1123,2507.57],[2024.1314,2879.0],[2024.1506,3112.7],[2024.1697,3490.99],[2024.1889,3881.19],[2024.2081,3642.41],[2024.2272,3454.64],[2024.2464,3647.86],[2024.2656,3453.49],[2024.2847,3156.94],[2024.3039,3147.29],[2024.3231,3262.77],[2024.3422,3137.25],[2024.3614,2928.7],[2024.3806,3071.84],[2024.3997,3825.9],[2024.4189,3780.9],[2024.4381,3705.9],[2024.4572,3620.56],[2024.4764,3418.61],[2024.4956,3432.89],[2024.5147,2929.39],[2024.5339,3244.08],[2024.553,3536.61],[2024.5722,3271.46],[2024.5914,2686.4],[2024.6105,2553.25],[2024.6297,2613.36],[2024.6489,2749.16],[2024.668,2427.9],[2024.6872,2297.29],[2024.7064,2320.9],[2024.7255,2582.86],[2024.7447,2659.35],[2024.7639,2439.96],[2024.783,2467.68],[2024.8022,2746.36],[2024.8214,2505.94],[2024.8405,2456.43],[2024.8597,3191.33],[2024.8789,3075.66],[2024.898,3363.66],[2024.9172,3711.17],[2024.9363,4005.7],[2024.9555,3951.94],[2024.9747,3277.54],[2024.9938,3349.51],[2025.011,3634.1],[2025.0301,3265.95],[2025.0493,3208.96],[2025.0684,3236.13],[2025.0876,2868.69],[2025.1068,2628.72],[2025.1259,2663.32],[2025.1451,2821.31],[2025.1643,2519.69],[2025.1834,2015.51],[2025.2026,1887.44],[2025.2218,2005.3],[2025.2409,1806.22],[2025.2601,1576.73],[2025.2793,1596.69],[2025.2984,1587.51],[2025.3176,1792.87],[2025.3368,1808.59],[2025.3559,2510.24],[2025.3751,2498.23],[2025.3943,2551.76],[2025.4134,2536.27],[2025.4326,2510.79],[2025.4517,2546.84],[2025.4709,2228.21],[2025.4901,2500.96],[2025.5092,2571.24],[2025.5284,2973.36],[2025.5476,3759.47],[2025.5667,3875.25],[2025.5859,3497.38],[2025.6051,4254.22],[2025.6242,4473.27],[2025.6434,4779.65],[2025.6626,4390.02],[2025.6817,4305.35],[2025.7009,4609.6],[2025.7201,4451.33],[2025.7392,4141.48],[2025.7584,4515.42],[2025.7775,4164.43],[2025.7967,3984.65],[2025.8159,4157.99],[2025.835,3911.06],[2025.8542,3582.62],[2025.8734,3092.85],[2025.8925,2801.68],[2025.9117,2992.11],[2025.9309,3061.3],[2025.95,3060.59],[2025.9692,3001.61],[2025.9884,2948.57],[2026.0082,3140.71],[2026.0274,3118.89],[2026.0465,3281.16],[2026.0657,2815.9],[2026.0849,2267.96],[2026.104,2088.76],[2026.1232,1966.04],[2026.1424,1957.81],[2026.1615,1939.07],[2026.1807,1936.6],[2026.1999,2177.48],[2026.219,2053.05],[2026.2382,1982.56],[2026.2574,2109.0],[2026.2765,2192.2],[2026.2957,2264.92],[2026.3149,2369.73],[2026.334,2321.64],[2026.3532,2369.04],[2026.3723,2127.65],[2026.3915,2097.99],[2026.4107,2004.34],[2026.4298,1686.4],[2026.449,1724.61],[2026.4682,1704.58],[2026.4873,1570.36],[2026.5065,1783.01],[2026.5257,1805.79],[2026.5448,1871.51],[2026.564,1953.41],[2026.5832,1882.52],[2026.6023,1908.68],[2026.6215,1873.94],[2026.6407,2463.82],[2026.6598,2417.94],[2026.679,2514.55],[2026.6982,2477.02],[2026.7173,2643.0],[2026.7365,2686.93],[2026.7556,2726.51],[2026.7748,2534.7],[2026.794,2408.74],[2026.8131,2326.92],[2026.8323,2273.05],[2026.8515,2120.98],[2026.8706,1835.5]],"daily":[[2022.16153,2972.49],[2022.16427,2950.12],[2022.16701,2834.47],[2022.16975,2617.16],[2022.17248,2664.83],[2022.17522,2555.04],[2022.17796,2497.77],[2022.1807,2576.75],[2022.18344,2729.78],[2022.18617,2608.05],[2022.18891,2559.56],[2022.19165,2574.75],[2022.19439,2518.94],[2022.19713,2590.7],[2022.19986,2620.15],[2022.2026,2772.06],[2022.20534,2814.85],[2022.20808,2945.34],[2022.21081,2946.26],[2022.21355,2860.46],[2022.21629,2897.98],[2022.21903,2973.13],[2022.22177,3031.07],[2022.2245,3108.06],[2022.22724,3106.67],[2022.22998,3143.18],[2022.23272,3291.58],[2022.23546,3336.63],[2022.23819,3401.99],[2022.24093,3385.16],[2022.24367,3281.64],[2022.24641,3449.55],[2022.24914,3445.06],[2022.25188,3522.83],[2022.25462,3521.24],[2022.25736,3411.79],[2022.2601,3171.69],[2022.26283,3233.27],[2022.26557,3192.07],[2022.26831,3261.92],[2022.27105,3211.87],[2022.27379,2981.05],[2022.27652,3030.38],[2022.27926,3118.34],[2022.282,3019.91],[2022.28474,3040.92],[2022.28747,3062.31],[2022.29021,2993.4],[2022.29295,3057.61],[2022.29569,3104.11],[2022.29843,3077.75],[2022.30116,2987.48],[2022.3039,2964.84],[2022.30664,2938.11],[2022.30938,2922.73],[2022.31211,3009.39],[2022.31485,2808.3],[2022.31759,2888.93],[2022.32033,2936.94],[2022.32307,2815.6],[2022.3258,2730.19],[2022.32854,2827.76],[2022.33128,2857.41],[2022.33402,2783.48],[2022.33676,2940.64],[2022.33949,2749.21],[2022.34223,2694.98],[2022.34497,2636.09],[2022.34771,2517.46],[2022.35044,2245.43],[2022.35318,2343.51],[2022.35592,2072.11],[2022.35866,1961.7],[2022.3614,2014.42],[2022.36413,2056.27],[2022.36687,2145.71],[2022.36961,2022.73],[2022.37235,2090.41],[2022.37509,1916.66],[2022.37782,2018.34],[2022.38056,1961.32],[2022.3833,1974.52],[2022.38604,2043.17],[2022.38877,1972.18],[2022.39151,1978.98],[2022.39425,1944.83],[2022.39699,1803.91],[2022.39973,1724.92],[2022.40246,1792.42],[2022.4052,1812.03],[2022.40794,1996.44],[2022.41068,1942.33],[2022.41342,1823.57],[2022.41615,1834.15],[2022.41889,1775.08],[2022.42163,1801.61],[2022.42437,1805.2],[2022.4271,1859.29],[2022.42984,1814.05],[2022.43258,1793.57],[2022.43532,1789.83],[2022.43806,1665.04],[2022.44079,1529.66],[2022.44353,1445.22],[2022.44627,1204.58],[2022.44901,1211.66],[2022.45175,1233.21],[2022.45448,1067.73],[2022.45722,1086.52],[2022.45996,993.64],[2022.4627,1127.66],[2022.46543,1127.64],[2022.46817,1124.82],[2022.47091,1051.42],[2022.47365,1143.39],[2022.47639,1226.84],[2022.47912,1243.45],[2022.48186,1199.83],[2022.4846,1193.68],[2022.48734,1144.58],[2022.49008,1098.94],[2022.49281,1067.3],[2022.49555,1059.77],[2022.49829,1066.51],[2022.50103,1073.77],[2022.50376,1151.06],[2022.5065,1134.54],[2022.50924,1186.97],[2022.51198,1237.59],[2022.51472,1222.51],[2022.51745,1216.98],[2022.52019,1168.4],[2022.52293,1097.24],[2022.52567,1038.19],[2022.52841,1113.59],[2022.53114,1191.53],[2022.53388,1233.13],[2022.53662,1352.63],[2022.53936,1338.64],[2022.54209,1578.72],[2022.54483,1542.98],[2022.54757,1520.2],[2022.55031,1576.75],[2022.55305,1537.41],[2022.55578,1549.3],[2022.55852,1599.48],[2022.56126,1445.38],[2022.564,1441.81],[2022.56674,1636.23],[2022.56947,1725.47],[2022.57221,1727.41],[2022.57495,1695.97],[2022.57769,1681.52],[2022.58042,1635.2],[2022.58316,1632.95],[2022.5859,1618.87],[2022.58864,1608.21],[2022.59138,1732.25],[2022.59411,1691.66],[2022.59685,1699.35],[2022.59959,1775.52],[2022.60233,1703.03],[2022.60507,1851.74],[2022.6078,1881.22],[2022.61054,1957.25],[2022.61328,1981.34],[2022.61602,1936.8],[2022.61875,1904.23],[2022.62149,1878.14],[2022.62423,1833.0],[2022.62697,1847.01],[2022.62971,1612.99],[2022.63244,1577.0],[2022.63518,1619.32],[2022.63792,1622.51],[2022.64066,1662.77],[2022.64339,1657.06],[2022.64613,1696.46],[2022.64887,1507.78],[2022.65161,1491.4],[2022.65435,1430.55],[2022.65708,1553.04],[2022.65982,1523.84],[2022.66256,1553.68],[2022.6653,1586.18],[2022.66804,1577.22],[2022.67077,1556.87],[2022.67351,1577.64],[2022.67625,1617.18],[2022.67899,1561.75],[2022.68172,1629.91],[2022.68446,1635.35],[2022.6872,1719.09],[2022.68994,1776.2],[2022.69268,1761.8],[2022.69541,1713.77],[2022.69815,1580.79],[2022.70089,1634.76],[2022.70363,1471.69],[2022.70637,1432.45],[2022.7091,1469.74],[2022.71184,1335.33],[2022.71458,1377.54],[2022.71732,1324.39],[2022.72005,1252.61],[2022.72279,1327.68],[2022.72553,1328.26],[2022.72827,1317.99],[2022.73101,1294.22],[2022.73374,1335.32],[2022.73648,1330.13],[2022.73922,1337.41],[2022.74196,1335.65],[2022.7447,1327.98],[2022.74743,1311.64],[2022.75017,1276.09],[2022.75291,1323.44],[2022.75565,1362.13],[2022.75838,1352.84],[2022.76112,1351.71],[2022.76386,1332.52],[2022.7666,1315.5],[2022.76934,1322.6],[2022.77207,1291.34],[2022.77481,1279.58],[2022.77755,1294.91],[2022.78029,1288.12],[2022.78303,1297.42],[2022.78576,1274.87],[2022.7885,1306.3],[2022.79124,1331.71],[2022.79398,1310.45],[2022.79671,1285.74],[2022.79945,1283.2],[2022.80219,1299.95],[2022.80493,1314.3],[2022.80767,1363.45],[2022.8104,1345.0],[2022.81314,1461.67],[2022.81588,1566.57],[2022.81862,1514.37],[2022.82136,1555.48],[2022.82409,1619.7],[2022.82683,1590.78],[2022.82957,1572.71],[2022.83231,1579.7],[2022.83504,1519.71],[2022.83778,1531.54],[2022.84052,1645.09],[2022.84326,1627.97],[2022.846,1572.23],[2022.84873,1568.59],[2022.85147,1332.84],[2022.85421,1100.17],[2022.85695,1299.46],[2022.85969,1287.22],[2022.86242,1255.27],[2022.86516,1221.82],[2022.8679,1241.6],[2022.87064,1251.74],[2022.87337,1215.6],[2022.87611,1200.81],[2022.87885,1212.3],[2022.88159,1218.43],[2022.88433,1142.47],[2022.88706,1108.35],[2022.8898,1108.35],[2022.89254,1183.2],[2022.89528,1203.98],[2022.89802,1198.93],[2022.90075,1205.9],[2022.90349,1195.13],[2022.90623,1170.09],[2022.90897,1216.9],[2022.9117,1295.69],[2022.91444,1276.27],[2022.91718,1294.3],[2022.91992,1243.33],[2022.92266,1280.26],[2022.92539,1259.68],[2022.92813,1271.65],[2022.93087,1232.44],[2022.93361,1281.12],[2022.93634,1264.28],[2022.93908,1266.38],[2022.94182,1263.87],[2022.94456,1274.62],[2022.9473,1320.55],[2022.95003,1288.56],[2022.95277,1266.35],[2022.95551,1168.26],[2022.95825,1188.15],[2022.96099,1184.72],[2022.96372,1167.61],[2022.96646,1217.7],[2022.9692,1213.6],[2022.97194,1218.18],[2022.97467,1220.16],[2022.97741,1221.15],[2022.98015,1218.96],[2022.98289,1226.97],[2022.98563,1212.79],[2022.98836,1189.99],[2022.9911,1201.6],[2022.99384,1199.23],[2022.99658,1196.77],[2023.0,1200.96],[2023.00274,1214.66],[2023.00548,1214.78],[2023.00821,1256.53],[2023.01095,1250.44],[2023.01369,1269.38],[2023.01643,1264.27],[2023.01916,1287.36],[2023.0219,1321.54],[2023.02464,1336.59],[2023.02738,1387.93],[2023.03012,1417.94],[2023.03285,1451.61],[2023.03559,1550.71],[2023.03833,1552.48],[2023.04107,1576.83],[2023.04381,1567.85],[2023.04654,1515.51],[2023.04928,1552.56],[2023.05202,1659.75],[2023.05476,1627.12],[2023.05749,1628.38],[2023.06023,1628.25],[2023.06297,1556.6],[2023.06571,1611.71],[2023.06845,1603.11],[2023.07118,1598.16],[2023.07392,1572.44],[2023.07666,1646.16],[2023.0794,1567.33],[2023.08214,1586.54],[2023.08487,1641.79],[2023.08761,1643.24],[2023.09035,1664.75],[2023.09309,1667.06],[2023.09582,1631.65],[2023.09856,1616.25],[2023.1013,1672.0],[2023.10404,1650.72],[2023.10678,1546.44],[2023.10951,1514.87],[2023.11225,1539.93],[2023.11499,1515.03],[2023.11773,1507.17],[2023.12047,1556.88],[2023.1232,1673.75],[2023.12594,1640.07],[2023.12868,1694.78],[2023.13142,1691.82],[2023.13415,1681.44],[2023.13689,1702.68],[2023.13963,1658.04],[2023.14237,1643.23],[2023.14511,1651.07],[2023.14784,1608.37],[2023.15058,1594.91],[2023.15332,1640.82],[2023.15606,1634.33],[2023.1588,1605.9],[2023.16153,1663.43],[2023.16427,1647.32],[2023.16701,1569.17],[2023.16975,1566.92],[2023.17248,1564.47],[2023.17522,1567.4],[2023.17796,1561.93],[2023.1807,1534.09],[2023.18344,1438.66],[2023.18617,1429.16],[2023.18891,1482.62],[2023.19165,1590.29],[2023.19439,1680.31],[2023.19713,1703.51],[2023.19986,1656.18],[2023.2026,1677.22],[2023.20534,1792.49],[2023.20808,1761.66],[2023.21081,1785.58],[2023.21355,1735.32],[2023.21629,1806.76],[2023.21903,1737.72],[2023.22177,1816.41],[2023.2245,1752.04],[2023.22724,1743.76],[2023.22998,1775.68],[2023.23272,1715.46],[2023.23546,1772.79],[2023.23819,1793.0],[2023.24093,1792.74],[2023.24367,1822.02],[2023.24641,1813.86],[2023.24914,1795.71],[2023.25188,1810.3],[2023.25462,1871.01],[2023.25736,1909.11],[2023.2601,1872.92],[2023.26283,1865.64],[2023.26557,1849.5],[2023.26831,1859.39],[2023.27105,1911.21],[2023.27379,1892.19],[2023.27652,1920.68],[2023.27926,2012.63],[2023.282,2101.64],[2023.28474,2092.47],[2023.28747,2120.01],[2023.29021,2076.24],[2023.29295,2104.54],[2023.29569,1936.4],[2023.29843,1943.1],[2023.30116,1850.0],[2023.3039,1874.23],[2023.30664,1862.06],[2023.30938,1842.76],[2023.31211,1866.75],[2023.31485,1866.56],[2023.31759,1908.79],[2023.32033,1892.51],[2023.32307,1908.92],[2023.3258,1876.92],[2023.32854,1831.95],[2023.33128,1870.79],[2023.33402,1904.65],[2023.33676,1877.7],[2023.33949,1995.06],[2023.34223,1900.22],[2023.34497,1873.08],[2023.34771,1849.04],[2023.35044,1848.6],[2023.35318,1842.4],[2023.35592,1796.49],[2023.35866,1808.02],[2023.3614,1796.11],[2023.36413,1800.5],[2023.36687,1817.55],[2023.36961,1824.12],[2023.37235,1821.86],[2023.37509,1801.73],[2023.37782,1812.59],[2023.38056,1820.48],[2023.3833,1804.53],[2023.38604,1817.53],[2023.38877,1854.38],[2023.39151,1800.1],[2023.39425,1805.95],[2023.39699,1828.69],[2023.39973,1831.12],[2023.40246,1910.91],[2023.4052,1893.08],[2023.40794,1901.03],[2023.41068,1874.13],[2023.41342,1862.2],[2023.41615,1907.26],[2023.41889,1892.41],[2023.42163,1890.51],[2023.42437,1811.83],[2023.4271,1884.49],[2023.42984,1832.4],[2023.43258,1846.3],[2023.43532,1840.23],[2023.43806,1752.38],[2023.44079,1753.42],[2023.44353,1742.53],[2023.44627,1739.04],[2023.44901,1650.52],[2023.45175,1665.52],[2023.45448,1716.67],[2023.45722,1727.2],[2023.45996,1720.58],[2023.4627,1737.66],[2023.46543,1792.12],[2023.46817,1891.01],[2023.47091,1872.94],[2023.47365,1892.86],[2023.47639,1876.06],[2023.47912,1900.51],[2023.48186,1859.43],[2023.4846,1889.7],[2023.48734,1827.97],[2023.49008,1852.23],[2023.49281,1933.19],[2023.49555,1924.57],[2023.49829,1937.44],[2023.50103,1955.39],[2023.50376,1936.63],[2023.5065,1910.59],[2023.50924,1848.64],[2023.51198,1870.6],[2023.51472,1865.54],[2023.51745,1863.01],[2023.52019,1880.56],[2023.52293,1878.34],[2023.52567,1872.11],[2023.52841,2006.51],[2023.53114,1939.35],[2023.53388,1931.47],[2023.53662,1923.68],[2023.53936,1911.65],[2023.54209,1897.6],[2023.54483,1889.01],[2023.54757,1890.97],[2023.55031,1892.08],[2023.55305,1864.91],[2023.55578,1889.19],[2023.55852,1850.0],[2023.56126,1857.74],[2023.564,1872.16],[2023.56674,1860.36],[2023.56947,1874.74],[2023.57221,1881.07],[2023.57495,1861.64],[2023.57769,1856.16],[2023.58042,1871.79],[2023.58316,1839.09],[2023.5859,1835.14],[2023.58864,1827.71],[2023.59138,1834.99],[2023.59411,1827.46],[2023.59685,1826.94],[2023.59959,1855.81],[2023.60233,1854.3],[2023.60507,1850.75],[2023.6078,1847.12],[2023.61054,1848.89],[2023.61328,1839.28],[2023.61602,1844.19],[2023.61875,1826.93],[2023.62149,1805.66],[2023.62423,1684.93],[2023.62697,1660.95],[2023.62971,1669.47],[2023.63244,1684.85],[2023.63518,1667.27],[2023.63792,1633.89],[2023.64066,1679.27],[2023.64339,1659.94],[2023.64613,1652.94],[2023.64887,1646.31],[2023.65161,1657.51],[2023.65435,1652.46],[2023.65708,1729.73],[2023.65982,1705.11],[2023.66256,1645.64],[2023.6653,1628.49],[2023.66804,1637.03],[2023.67077,1636.12],[2023.67351,1629.66],[2023.67625,1633.63],[2023.67899,1632.25],[2023.68172,1647.6],[2023.68446,1636.14],[2023.6872,1635.16],[2023.68994,1616.83],[2023.69268,1551.64],[2023.69541,1592.43],[2023.69815,1607.99],[2023.70089,1626.97],[2023.70363,1641.64],[2023.70637,1635.22],[2023.7091,1622.9],[2023.71184,1637.35],[2023.71458,1643.54],[2023.71732,1622.89],[2023.72005,1584.31],[2023.72279,1593.27],[2023.72553,1593.86],[2023.72827,1580.85],[2023.73101,1588.32],[2023.73374,1593.42],[2023.73648,1597.49],[2023.73922,1652.88],[2023.74196,1667.94],[2023.7447,1671.16],[2023.74743,1733.81],[2023.75017,1663.63],[2023.75291,1656.69],[2023.75565,1647.84],[2023.75838,1611.48],[2023.76112,1645.83],[2023.76386,1634.51],[2023.7666,1633.55],[2023.76934,1579.81],[2023.77207,1567.71],[2023.77481,1566.25],[2023.77755,1539.61],[2023.78029,1552.09],[2023.78303,1555.26],[2023.78576,1558.07],[2023.7885,1600.53],[2023.79124,1565.44],[2023.79398,1563.75],[2023.79671,1567.46],[2023.79945,1604.67],[2023.80219,1629.3],[2023.80493,1663.43],[2023.80767,1765.38],[2023.8104,1784.44],[2023.81314,1787.4],[2023.81588,1804.04],[2023.81862,1780.05],[2023.82136,1776.62],[2023.82409,1795.55],[2023.82683,1810.09],[2023.82957,1816.46],[2023.83231,1847.09],[2023.83504,1800.62],[2023.83778,1832.8],[2023.84052,1857.7],[2023.84326,1894.16],[2023.846,1899.84],[2023.84873,1888.12],[2023.85147,1889.32],[2023.85421,2120.56],[2023.85695,2078.29],[2023.85969,2052.71],[2023.86242,2045.19],[2023.86516,2055.27],[2023.8679,1979.05],[2023.87064,2060.41],[2023.87337,1960.88],[2023.87611,1961.28],[2023.87885,1963.29],[2023.88159,2013.2],[2023.88433,2022.24],[2023.88706,1937.07],[2023.8898,2064.43],[2023.89254,2062.21],[2023.89528,2081.15],[2023.89802,2084.41],[2023.90075,2063.29],[2023.90349,2027.42],[2023.90623,2049.34],[2023.90897,2029.93],[2023.9117,2052.56],[2023.91444,2087.14],[2023.91718,2165.7],[2023.91992,2193.69],[2023.92266,2243.22],[2023.92539,2293.84],[2023.92813,2231.66],[2023.93087,2357.58],[2023.93361,2358.73],[2023.93634,2341.18],[2023.93908,2352.46],[2023.94182,2224.58],[2023.94456,2202.04],[2023.9473,2260.65],[2023.95003,2316.58],[2023.95277,2219.34],[2023.95551,2226.93],[2023.95825,2196.48],[2023.96099,2217.27],[2023.96372,2177.87],[2023.96646,2201.91],[2023.9692,2239.54],[2023.97194,2326.52],[2023.97467,2309.05],[2023.97741,2265.69],[2023.98015,2272.56],[2023.98289,2231.47],[2023.98563,2378.74],[2023.98836,2347.57],[2023.9911,2300.69],[2023.99384,2292.07],[2023.99658,2281.47],[2024.0,2352.33],[2024.00274,2355.84],[2024.00548,2210.76],[2024.00821,2269.04],[2024.01095,2268.65],[2024.01369,2241.62],[2024.01643,2222.87],[2024.01916,2333.03],[2024.0219,2344.83],[2024.02464,2582.1],[2024.02738,2619.62],[2024.03012,2524.46],[2024.03285,2576.6],[2024.03559,2472.24],[2024.03833,2511.36],[2024.04107,2587.69],[2024.04381,2528.37],[2024.04654,2467.02],[2024.04928,2489.5],[2024.05202,2469.59],[2024.05476,2453.91],[2024.05749,2310.83],[2024.06023,2240.69],[2024.06297,2233.56],[2024.06571,2217.71],[2024.06845,2267.2],[2024.07118,2267.89],[2024.07392,2257.21],[2024.07666,2317.06],[2024.0794,2344.49],[2024.08214,2282.54],[2024.08487,2303.82],[2024.08761,2308.04],[2024.09035,2296.04],[2024.09309,2289.55],[2024.09582,2298.89],[2024.09856,2372.2],[2024.1013,2423.75],[2024.10404,2419.91],[2024.10678,2487.52],[2024.10951,2501.23],[2024.11225,2507.57],[2024.11499,2658.12],[2024.11773,2642.19],[2024.12047,2777.9],[2024.1232,2824.38],[2024.12594,2803.69],[2024.12868,2786.67],[2024.13142,2879.0],[2024.13415,2943.57],[2024.13689,3013.5],[2024.13963,2970.36],[2024.14237,2971.01],[2024.14511,2921.66],[2024.14784,2992.39],[2024.15058,3112.7],[2024.15332,3178.99],[2024.15606,3244.52],[2024.1588,3385.7],[2024.16153,3341.92],[2024.16427,3435.05],[2024.16701,3422.05],[2024.16975,3490.99],[2024.17248,3630.43],[2024.17522,3554.96],[2024.17796,3819.23],[2024.1807,3874.35],[2024.18344,3892.06],[2024.18617,3915.42],[2024.18891,3881.19],[2024.19165,4066.44],[2024.19439,3980.27],[2024.19713,4006.46],[2024.19986,3883.14],[2024.2026,3735.22],[2024.20534,3522.86],[2024.20808,3642.41],[2024.21081,3517.99],[2024.21355,3157.62],[2024.21629,3513.39],[2024.21903,3492.99],[2024.22177,3333.69],[2024.2245,3336.59],[2024.22724,3454.64],[2024.22998,3590.88],[2024.23272,3587.51],[2024.23546,3500.12],[2024.23819,3561.29],[2024.24093,3511.81],[2024.24367,3507.94],[2024.24641,3647.86],[2024.24914,3505.03],[2024.25188,3277.23],[2024.25462,3311.44],[2024.25736,3330.04],[2024.2601,3318.89],[2024.26283,3354.18],[2024.26557,3453.49],[2024.26831,3695.29],[2024.27105,3505.16],[2024.27379,3543.74],[2024.27652,3505.25],[2024.27926,3243.03],[2024.282,3004.9],[2024.28474,3156.94],[2024.28747,3101.6],[2024.29021,3084.92],[2024.29295,2984.73],[2024.29569,3066.03],[2024.29843,3059.28],[2024.30116,3157.63],[2024.3039,3147.29],[2024.30664,3201.65],[2024.30938,3219.91],[2024.31211,3139.81],[2024.31485,3156.51],[2024.31759,3130.16],[2024.32033,3252.17],[2024.32307,3262.77],[2024.3258,3215.43],[2024.32854,3012.29],[2024.33128,2969.78],[2024.33402,2988.17],[2024.33676,3103.54],[2024.33949,3117.58],[2024.34223,3137.25],[2024.34497,3062.73],[2024.34771,3006.58],[2024.35044,2973.66],[2024.35318,3036.02],[2024.35592,2909.79],[2024.35866,2911.6],[2024.3614,2928.7],[2024.36413,2949.36],[2024.36687,2881.16],[2024.36961,3037.06],[2024.37235,2945.13],[2024.37509,3094.12],[2024.37782,3122.95],[2024.38056,3071.84],[2024.3833,3663.86],[2024.38604,3789.31],[2024.38877,3737.22],[2024.39151,3776.93],[2024.39425,3726.93],[2024.39699,3749.24],[2024.39973,3825.9],[2024.40246,3892.01],[2024.4052,3840.26],[2024.40794,3763.2],[2024.41068,3746.85],[2024.41342,3760.03],[2024.41615,3813.2],[2024.41889,3780.9],[2024.42163,3766.39],[2024.42437,3812.52],[2024.4271,3864.26],[2024.42984,3811.61],[2024.43258,3678.63],[2024.43532,3680.95],[2024.43806,3705.9],[2024.44079,3666.72],[2024.44353,3498.33],[2024.44627,3559.62],[2024.44901,3469.28],[2024.45175,3480.27],[2024.45448,3565.55],[2024.45722,3620.56],[2024.45996,3511.38],[2024.4627,3483.68],[2024.46543,3559.35],[2024.46817,3511.09],[2024.47091,3516.08],[2024.47365,3494.81],[2024.47639,3418.61],[2024.47912,3350.26],[2024.48186,3395.03],[2024.4846,3369.48],[2024.48734,3444.8],[2024.49008,3373.64],[2024.49281,3372.97],[2024.49555,3432.89],[2024.49829,3440.34],[2024.50103,3416.35],[2024.50376,3292.92],[2024.5065,3054.52],[2024.50924,2981.6],[2024.51198,3069.38],[2024.51472,2929.39],[2024.51745,3018.73],[2024.52019,3064.03],[2024.52293,3102.22],[2024.52567,3100.33],[2024.52841,3134.16],[2024.53114,3177.2],[2024.53388,3244.08],[2024.53662,3489.55],[2024.53936,3443.51],[2024.54209,3388.75],[2024.54483,3426.26],[2024.54757,3505.73],[2024.55031,3519.3],[2024.55305,3536.61],[2024.55578,3440.42],[2024.55852,3482.0],[2024.56126,3336.34],[2024.564,3174.43],[2024.56674,3275.95],[2024.56947,3247.61],[2024.57221,3271.46],[2024.57495,3320.54],[2024.57769,3278.67],[2024.58042,3231.3],[2024.58316,3201.56],[2024.5859,2986.01],[2024.58864,2903.39],[2024.59138,2686.4],[2024.59411,2417.21],[2024.59685,2458.72],[2024.59959,2336.59],[2024.60233,2683.35],[2024.60507,2599.6],[2024.6078,2610.02],[2024.61054,2553.25],[2024.61328,2724.43],[2024.61602,2703.67],[2024.61875,2662.91],[2024.62149,2570.09],[2024.62423,2593.19],[2024.62697,2614.55],[2024.62971,2613.36],[2024.63244,2637.31],[2024.63518,2573.11],[2024.63792,2631.4],[2024.64066,2622.95],[2024.64339,2764.45],[2024.64613,2769.39],[2024.64887,2749.16],[2024.65161,2681.34],[2024.65435,2458.73],[2024.65708,2528.42],[2024.65982,2528.79],[2024.66256,2525.82],[2024.6653,2513.39],[2024.66804,2427.9],[2024.67077,2538.19],[2024.67351,2420.6],[2024.67625,2448.98],[2024.67899,2367.74],[2024.68172,2223.88],[2024.68446,2274.11],[2024.6872,2297.29],[2024.68994,2358.48],[2024.69268,2389.58],[2024.69541,2339.84],[2024.69815,2361.78],[2024.70089,2441.61],[2024.70363,2418.6],[2024.70637,2320.9],[2024.7091,2295.28],[2024.71184,2341.71],[2024.71458,2369.73],[2024.71732,2464.75],[2024.72005,2561.07],[2024.72279,2615.86],[2024.72553,2582.86],[2024.72827,2648.55],[2024.73101,2654.35],[2024.73374,2579.39],[2024.73648,2632.2],[2024.73922,2695.9],[2024.74196,2677.54],[2024.7447,2659.35],[2024.74743,2603.06],[2024.75017,2448.92],[2024.75291,2365.23],[2024.75565,2349.79],[2024.75838,2414.79],[2024.76112,2415.63],[2024.76386,2439.96],[2024.7666,2421.8],[2024.76934,2439.84],[2024.77207,2368.28],[2024.77481,2383.86],[2024.77755,2436.51],[2024.78029,2476.52],[2024.78303,2467.68],[2024.78576,2628.9],[2024.7885,2606.02],[2024.79124,2611.1],[2024.79398,2604.27],[2024.79671,2641.55],[2024.79945,2648.66],[2024.80219,2746.36],[2024.80493,2665.71],[2024.80767,2620.2],[2024.8104,2509.1],[2024.81314,2534.5],[2024.81588,2435.93],[2024.81862,2479.6],[2024.82136,2505.94],[2024.82409,2565.35],[2024.82683,2637.96],[2024.82957,2657.37],[2024.83231,2515.8],[2024.83504,2511.89],[2024.83778,2491.07],[2024.84052,2456.43],[2024.84326,2397.03],[2024.846,2422.65],[2024.84873,2724.17],[2024.85147,2895.59],[2024.85421,2962.3],[2024.85695,3131.14],[2024.85969,3191.33],[2024.86242,3374.81],[2024.86516,3246.26],[2024.8679,3192.6],[2024.87064,3058.95],[2024.87337,3103.04],[2024.87611,3133.27],[2024.87885,3075.66],[2024.88159,3207.86],[2024.88433,3111.38],[2024.88706,3072.19],[2024.8898,3361.05],[2024.89254,3331.6],[2024.89528,3396.22],[2024.89802,3363.66],[2024.90075,3413.54],[2024.90349,3326.52],[2024.90623,3657.25],[2024.90897,3579.81],[2024.9117,3593.49],[2024.91444,3705.71],[2024.91718,3711.17],[2024.91992,3644.2],[2024.92266,3620.71],[2024.92539,3841.33],[2024.92813,3811.01],[2024.93087,4005.81],[2024.93361,4002.69],[2024.93634,4005.7],[2024.93908,3718.69],[2024.94182,3631.83],[2024.94456,3832.82],[2024.9473,3883.1],[2024.95003,3911.21],[2024.95277,3868.41],[2024.95551,3951.94],[2024.95825,3987.48],[2024.96099,3886.77],[2024.96372,3618.79],[2024.96646,3417.93],[2024.9692,3472.55],[2024.97194,3337.22],[2024.97467,3277.54],[2024.97741,3415.79],[2024.98015,3492.05],[2024.98289,3493.24],[2024.98563,3331.23],[2024.98836,3328.92],[2024.9911,3397.9],[2024.99384,3349.51],[2024.99658,3356.39],[2024.99932,3332.53],[2025.0,3353.5],[2025.00274,3451.39],[2025.00548,3605.01],[2025.00821,3657.71],[2025.01095,3634.1],[2025.01369,3688.61],[2025.01643,3381.58],[2025.01916,3326.33],[2025.0219,3219.43],[2025.02464,3267.49],[2025.02738,3282.22],[2025.03012,3265.95],[2025.03285,3135.5],[2025.03559,3223.68],[2025.03833,3450.54],[2025.04107,3308.35],[2025.04381,3474.11],[2025.04654,3305.79],[2025.04928,3208.96],[2025.05202,3278.04],[2025.05476,3327.41],[2025.05749,3240.22],[2025.06023,3334.71],[2025.06297,3309.55],[2025.06571,3317.27],[2025.06845,3236.13],[2025.07118,3178.92],[2025.07392,3077.11],[2025.07666,3113.0],[2025.0794,3247.78],[2025.08214,3298.27],[2025.08487,3118.33],[2025.08761,2868.69],[2025.09035,2884.57],[2025.09309,2735.05],[2025.09582,2787.78],[2025.09856,2688.4],[2025.1013,2622.21],[2025.10404,2632.31],[2025.10678,2628.72],[2025.10951,2661.17],[2025.11225,2602.78],[2025.11499,2736.9],[2025.11773,2675.9],[2025.12047,2726.09],[2025.1232,2693.56],[2025.12594,2663.32],[2025.12868,2743.2],[2025.13142,2669.34],[2025.13415,2715.77],[2025.13689,2740.39],[2025.13963,2659.66],[2025.14237,2764.03],[2025.14511,2821.31],[2025.14784,2513.82],[2025.15058,2493.59],[2025.15332,2331.45],[2025.15606,2305.48],[2025.1588,2237.91],[2025.16153,2216.64],[2025.16427,2519.69],[2025.16701,2145.57],[2025.16975,2170.02],[2025.17248,2241.98],[2025.17522,2202.48],[2025.17796,2138.99],[2025.1807,2201.51],[2025.18344,2015.51],[2025.18617,1861.15],[2025.18891,1919.84],[2025.19165,1908.98],[2025.19439,1862.97],[2025.19713,1909.47],[2025.19986,1937.39],[2025.2026,1887.44],[2025.20534,1927.0],[2025.20808,1932.54],[2025.21081,2057.75],[2025.21355,1982.1],[2025.21629,1964.85],[2025.21903,1980.04],[2025.22177,2005.3],[2025.2245,2077.48],[2025.22724,2067.76],[2025.22998,2009.19],[2025.23272,2002.36],[2025.23546,1895.5],[2025.23819,1827.32],[2025.24093,1806.22],[2025.24367,1823.48],[2025.24641,1905.49],[2025.24914,1795.31],[2025.25188,1815.64],[2025.25462,1815.34],[2025.25736,1805.97],[2025.2601,1576.73],[2025.26283,1555.24],[2025.26557,1472.55],[2025.26831,1668.04],[2025.27105,1522.52],[2025.27379,1567.15],[2025.27652,1643.53],[2025.27926,1596.69],[2025.282,1622.77],[2025.28474,1588.63],[2025.28747,1578.11],[2025.29021,1582.55],[2025.29295,1588.92],[2025.29569,1612.92],[2025.29843,1587.51],[2025.30116,1579.73],[2025.3039,1757.33],[2025.30664,1796.1],[2025.30938,1769.83],[2025.31211,1786.63],[2025.31485,1821.88],[2025.31759,1792.87],[2025.32033,1798.85],[2025.32307,1799.18],[2025.3258,1793.78],[2025.32854,1839.22],[2025.33128,1842.71],[2025.33402,1833.84],[2025.33676,1808.59],[2025.33949,1819.7],[2025.34223,1815.09],[2025.34497,1811.61],[2025.34771,2206.51],[2025.35044,2345.51],[2025.35318,2582.42],[2025.35592,2510.24],[2025.35866,2496.4],[2025.3614,2680.13],[2025.36413,2610.06],[2025.36687,2546.86],[2025.36961,2536.3],[2025.37235,2475.75],[2025.37509,2498.23],[2025.37782,2529.17],[2025.38056,2524.17],[2025.3833,2552.35],[2025.38604,2664.16],[2025.38877,2526.44],[2025.39151,2530.65],[2025.39425,2551.76],[2025.39699,2564.14],[2025.39973,2663.07],[2025.40246,2682.21],[2025.4052,2632.65],[2025.40794,2529.94],[2025.41068,2529.09],[2025.41342,2536.27],[2025.41615,2607.1],[2025.41889,2593.28],[2025.42163,2608.64],[2025.42437,2416.29],[2025.4271,2477.19],[2025.42984,2526.51],[2025.43258,2510.79],[2025.43532,2681.52],[2025.43806,2813.52],[2025.44079,2773.53],[2025.44353,2651.8],[2025.44627,2579.49],[2025.44901,2533.44],[2025.45175,2546.84],[2025.45448,2540.61],[2025.45722,2510.76],[2025.45996,2524.3],[2025.4627,2521.65],[2025.46543,2407.3],[2025.46817,2300.5],[2025.47091,2228.21],[2025.47365,2421.82],[2025.47639,2448.01],[2025.47912,2419.31],[2025.48186,2416.15],[2025.4846,2423.87],[2025.48734,2437.11],[2025.49008,2500.96],[2025.49281,2486.46],[2025.49555,2405.79],[2025.49829,2571.34],[2025.50103,2591.01],[2025.50376,2508.52],[2025.5065,2517.28],[2025.50924,2571.24],[2025.51198,2543.01],[2025.51472,2615.51],[2025.51745,2770.78],[2025.52019,2954.85],[2025.52293,2957.89],[2025.52567,2942.91],[2025.52841,2973.36],[2025.53114,3013.35],[2025.53388,3139.89],[2025.53662,3371.51],[2025.53936,3476.78],[2025.54209,3549.02],[2025.54483,3595.27],[2025.54757,3759.47],[2025.55031,3763.37],[2025.55305,3749.15],[2025.55578,3629.7],[2025.55852,3708.01],[2025.56126,3727.27],[2025.564,3741.4],[2025.56674,3875.25],[2025.56947,3787.43],[2025.57221,3793.45],[2025.57495,3808.2],[2025.57769,3696.71],[2025.58042,3488.37],[2025.58316,3392.74],[2025.5859,3497.38],[2025.58864,3718.99],[2025.59138,3611.9],[2025.59411,3683.92],[2025.59685,3914.33],[2025.59959,4009.85],[2025.60233,4263.6],[2025.60507,4254.22],[2025.6078,4226.97],[2025.61054,4590.93],[2025.61328,4756.28],[2025.61602,4548.17],[2025.61875,4439.99],[2025.62149,4426.18],[2025.62423,4473.27],[2025.62697,4312.51],[2025.62971,4073.46],[2025.63244,4334.5],[2025.63518,4223.21],[2025.63792,4831.35],[2025.64066,4776.09],[2025.64339,4779.65],[2025.64613,4372.99],[2025.64887,4600.43],[2025.65161,4503.39],[2025.65435,4507.18],[2025.65708,4360.15],[2025.65982,4374.15],[2025.66256,4390.02],[2025.6653,4314.47],[2025.66804,4325.37],[2025.67077,4450.39],[2025.67351,4298.74],[2025.67625,4306.99],[2025.67899,4274.24],[2025.68172,4305.35],[2025.68446,4308.07],[2025.6872,4309.04],[2025.68994,4349.15],[2025.69268,4461.23],[2025.69541,4715.25],[2025.69815,4668.18],[2025.70089,4609.6],[2025.70363,4526.82],[2025.70637,4503.56],[2025.7091,4592.73],[2025.71184,4589.92],[2025.71458,4470.92],[2025.71732,4482.27],[2025.72005,4451.33],[2025.72279,4202.88],[2025.72553,4165.5],[2025.72827,4153.47],[2025.73101,3868.33],[2025.73374,4035.89],[2025.73648,4018.66],[2025.73922,4141.48],[2025.74196,4217.34],[2025.7447,4145.96],[2025.74743,4351.11],[2025.75017,4487.92],[2025.75291,4514.87],[2025.75565,4489.2],[2025.75838,4515.42],[2025.76112,4687.77],[2025.76386,4451.15],[2025.7666,4527.65],[2025.76934,4369.14],[2025.77207,3843.01],[2025.77481,3750.61],[2025.77755,4164.43],[2025.78029,4245.47],[2025.78303,4125.41],[2025.78576,3987.46],[2025.7885,3894.75],[2025.79124,3832.56],[2025.79398,3890.35],[2025.79671,3984.65],[2025.79945,3980.76],[2025.80219,3876.76],[2025.80493,3808.12],[2025.80767,3856.03],[2025.8104,3934.57],[2025.81314,3953.47],[2025.81588,4157.99],[2025.81862,4120.12],[2025.82136,3982.26],[2025.82409,3903.35],[2025.82683,3804.38],[2025.82957,3847.08],[2025.83231,3874.19],[2025.83504,3911.06],[2025.83778,3602.31],[2025.84052,3292.57],[2025.84326,3425.17],[2025.846,3312.26],[2025.84873,3435.3],[2025.85147,3400.38],[2025.85421,3582.62],[2025.85695,3568.46],[2025.85969,3415.28],[2025.86242,3413.09],[2025.86516,3232.76],[2025.8679,3103.79],[2025.87064,3166.63],[2025.87337,3092.85],[2025.87611,3024.54],[2025.87885,3122.98],[2025.88159,3023.07],[2025.88433,2831.78],[2025.88706,2765.7],[2025.8898,2767.61],[2025.89254,2801.68],[2025.89528,2952.71],[2025.89802,2957.94],[2025.90075,3027.81],[2025.90349,3014.54],[2025.90623,3032.3],[2025.90897,2991.69],[2025.9117,2992.11],[2025.91444,2800.19],[2025.91718,2997.94],[2025.91992,3191.57],[2025.92266,3134.32],[2025.92539,3024.43],[2025.92813,3040.21],[2025.93087,3061.3],[2025.93361,3125.2],[2025.93634,3321.11],[2025.93908,3325.39],[2025.94182,3237.06],[2025.94456,3084.17],[2025.9473,3116.7],[2025.95003,3060.59],[2025.95277,2964.18],[2025.95551,2964.18],[2025.95825,2831.4],[2025.96099,2827.07],[2025.96372,2977.97],[2025.96646,2977.58],[2025.9692,3001.61],[2025.97194,3006.07],[2025.97467,2963.37],[2025.97741,2945.59],[2025.98015,2903.58],[2025.98289,2925.75],[2025.98563,2948.0],[2025.98836,2948.57],[2025.9911,2934.54],[2025.99384,2971.42],[2025.99658,2967.04],[2026.0,3000.39],[2026.00274,3124.42],[2026.00548,3125.92],[2026.00821,3140.71],[2026.01095,3226.13],[2026.01369,3295.95],[2026.01643,3166.84],[2026.01916,3104.38],[2026.0219,3083.05],[2026.02464,3082.4],[2026.02738,3118.89],[2026.03012,3092.33],[2026.03285,3322.1],[2026.03559,3354.72],[2026.03833,3317.1],[2026.04107,3295.48],[2026.04381,3308.86],[2026.04654,3281.16],[2026.04928,3186.62],[2026.05202,2935.61],[2026.05476,2978.9],[2026.05749,2949.63],[2026.06023,2953.26],[2026.06297,2948.74],[2026.06571,2815.9],[2026.06845,2926.46],[2026.07118,3022.21],[2026.07392,3006.61],[2026.07666,2818.23],[2026.0794,2702.38],[2026.08214,2445.09],[2026.08487,2267.96],[2026.08761,2344.36],[2026.09035,2227.56],[2026.09309,2143.5],[2026.09582,1821.68],[2026.09856,2063.39],[2026.1013,2090.55],[2026.10404,2088.76],[2026.10678,2103.57],[2026.10951,2019.5],[2026.11225,1940.62],[2026.11499,1946.94],[2026.11773,2048.53],[2026.12047,2086.01],[2026.1232,1966.04],[2026.12594,1997.92],[2026.12868,1992.19],[2026.13142,1953.97],[2026.13415,1948.2],[2026.13689,1969.02],[2026.13963,1973.74],[2026.14237,1957.81],[2026.14511,1855.5],[2026.14784,1852.97],[2026.15058,2054.63],[2026.15332,2026.79],[2026.15606,1930.76],[2026.1588,1965.05],[2026.16153,1939.07],[2026.16427,2027.27],[2026.16701,1982.77],[2026.16975,2126.51],[2026.17248,2071.61],[2026.17522,1978.75],[2026.17796,1969.46],[2026.1807,1936.6],[2026.18344,1992.94],[2026.18617,2037.12],[2026.18891,2051.57],[2026.19165,2073.14],[2026.19439,2092.56],[2026.19713,2097.09],[2026.19986,2177.48],[2026.2026,2351.18],[2026.20534,2318.05],[2026.20808,2203.67],[2026.21081,2137.42],[2026.21355,2146.5],[2026.21629,2076.69],[2026.21903,2053.05],[2026.22177,2152.15],[2026.2245,2155.7],[2026.22724,2168.02],[2026.22998,2059.58],[2026.23272,1991.27],[2026.23546,1992.69],[2026.23819,1982.56],[2026.24093,2023.51],[2026.24367,2104.71],[2026.24641,2138.74],[2026.24914,2056.85],[2026.25188,2053.39],[2026.25462,2065.35],[2026.25736,2109.0],[2026.2601,2107.76],[2026.26283,2241.81],[2026.26557,2190.34],[2026.26831,2189.14],[2026.27105,2245.15],[2026.27379,2285.39],[2026.27652,2192.2],[2026.27926,2370.71],[2026.282,2323.31],[2026.28474,2359.44],[2026.28747,2348.65],[2026.29021,2421.07],[2026.29295,2351.1],[2026.29569,2264.92],[2026.29843,2315.21],[2026.30116,2327.97],[2026.3039,2376.09],[2026.30664,2331.51],[2026.30938,2315.69],[2026.31211,2318.83],[2026.31485,2369.73],[2026.31759,2303.06],[2026.32033,2289.42],[2026.32307,2253.42],[2026.3258,2256.25],[2026.32854,2295.09],[2026.33128,2316.23],[2026.33402,2321.64],[2026.33676,2346.4],[2026.33949,2361.18],[2026.34223,2350.8],[2026.34497,2291.11],[2026.34771,2306.97],[2026.35044,2326.73],[2026.35318,2369.04],[2026.35592,2339.36],[2026.35866,2274.64],[2026.3614,2257.58],[2026.36413,2280.93],[2026.36687,2223.33],[2026.36961,2179.75],[2026.37235,2127.65],[2026.37509,2128.52],[2026.37782,2109.96],[2026.38056,2126.98],[2026.3833,2131.41],[2026.38604,2064.64],[2026.38877,2115.95],[2026.39151,2097.99],[2026.39425,2111.37],[2026.39699,2070.86],[2026.39973,2022.2],[2026.40246,2007.55],[2026.4052,2011.98],[2026.40794,2019.46],[2026.41068,2004.34],[2026.41342,2003.22],[2026.41615,1857.72],[2026.41889,1811.73],[2026.42163,1769.58],[2026.42437,1580.86],[2026.4271,1568.77],[2026.42984,1686.4],[2026.43258,1690.15],[2026.43532,1637.71],[2026.43806,1620.14],[2026.44079,1672.28],[2026.44353,1665.13],[2026.44627,1680.21],[2026.44901,1724.61],[2026.45175,1794.96],[2026.45448,1790.4],[2026.45722,1747.89],[2026.45996,1709.53],[2026.4627,1710.98],[2026.46543,1739.3],[2026.46817,1704.58],[2026.47091,1726.51],[2026.47365,1665.44],[2026.47639,1619.92],[2026.47912,1564.82],[2026.48186,1576.62],[2026.4846,1571.59],[2026.48734,1570.36],[2026.49008,1610.21],[2026.49281,1569.58],[2026.49555,1608.96],[2026.49829,1698.17],[2026.50103,1756.52],[2026.50376,1779.03],[2026.5065,1783.01],[2026.50924,1797.57],[2026.51198,1768.51],[2026.51472,1742.68],[2026.51745,1744.48],[2026.52019,1795.69],[2026.52293,1788.1],[2026.52567,1805.79],[2026.52841,1773.5],[2026.53114,1889.48],[2026.53388,1916.94],[2026.53662,1863.19],[2026.53936,1840.99],[2026.54209,1861.39],[2026.54483,1871.51],[2026.54757,1903.76],[2026.55031,1928.38],[2026.55305,1933.49],[2026.55578,1877.1],[2026.55852,1860.18],[2026.56126,1873.22],[2026.564,1953.41],[2026.56674,1890.61],[2026.56947,1919.95],[2026.57221,1908.52],[2026.57495,1917.37],[2026.57769,1860.35],[2026.58042,1843.42],[2026.58316,1882.52],[2026.5859,1858.26],[2026.58864,1868.39],[2026.59138,1906.53],[2026.59411,1902.06],[2026.59685,1913.28],[2026.59959,1915.53],[2026.60233,1908.68],[2026.60507,1871.28],[2026.6078,1881.37],[2026.61054,1878.13],[2026.61328,1883.99],[2026.61602,1880.65],[2026.61875,1880.91],[2026.62149,1873.94],[2026.62423,1912.2],[2026.62697,1916.46],[2026.62971,2251.46],[2026.63244,2326.38],[2026.63518,2515.28],[2026.63792,2424.25],[2026.64066,2463.82],[2026.64339,2481.83],[2026.64613,2443.16],[2026.64887,2506.26],[2026.65161,2510.41],[2026.65435,2442.54],[2026.65708,2457.69],[2026.65982,2417.94],[2026.66256,2466.82],[2026.6653,2417.84],[2026.66804,2391.5],[2026.67077,2508.02],[2026.67351,2456.08],[2026.67625,2480.74],[2026.67899,2514.55],[2026.68172,2490.96],[2026.68446,2484.94],[2026.6872,2466.91],[2026.68994,2437.1],[2026.69268,2514.73],[2026.69541,2525.94],[2026.69815,2477.02],[2026.70089,2514.41],[2026.70363,2399.09],[2026.70637,2416.12],[2026.7091,2447.11],[2026.71184,2611.35],[2026.71458,2631.96],[2026.71732,2643.0],[2026.72005,2776.47],[2026.72279,2752.63],[2026.72553,2684.69],[2026.72827,2687.3],[2026.73101,2690.48],[2026.73374,2695.21],[2026.73648,2686.93],[2026.73922,2688.67],[2026.74196,2676.72],[2026.7447,2683.68],[2026.74743,2705.54],[2026.75017,2668.15],[2026.75291,2687.26],[2026.75565,2726.51],[2026.75838,2711.03],[2026.76112,2697.52],[2026.76386,2573.53],[2026.7666,2471.91],[2026.76934,2485.54],[2026.77207,2504.03],[2026.77481,2534.7],[2026.77755,2444.36],[2026.78029,2496.63],[2026.78303,2418.21],[2026.78576,2440.48],[2026.7885,2419.77],[2026.79124,2399.8],[2026.79398,2408.74],[2026.79671,2404.82],[2026.79945,2446.73],[2026.80219,2470.77],[2026.80493,2386.19],[2026.80767,2384.08],[2026.8104,2355.95],[2026.81314,2326.92],[2026.81588,2320.28],[2026.81862,2347.73],[2026.82136,2357.62],[2026.82409,2249.5],[2026.82683,2241.05],[2026.82957,2252.75],[2026.83231,2273.05],[2026.83504,2248.89],[2026.83778,2272.73],[2026.84052,2422.31],[2026.84326,2234.48],[2026.846,2235.05],[2026.84873,2236.32],[2026.85147,2120.98],[2026.85421,2131.5],[2026.85695,2050.18],[2026.85969,2055.88],[2026.86242,2016.83],[2026.86516,1927.59],[2026.8679,1769.12],[2026.87064,1835.5],[2026.87337,1819.28],[2026.87611,1822.96],[2026.87885,1755.7]],"cmp":{"2015":[[0,0.0],[1,-78.7],[2,-80.15],[3,-79.97],[4,-69.8],[5,-65.58],[6,-48.32],[7,-48.31],[8,-52.25],[9,-55.72],[10,-65.97],[11,-69.26],[12,-64.4],[13,-58.58],[14,-60.55],[15,-61.0],[16,-61.75],[17,-65.18],[18,-67.76],[19,-67.2],[20,-67.55],[21,-66.31],[22,-66.56],[23,-62.7],[24,-61.6],[25,-61.78],[26,-63.39],[27,-64.23],[28,-63.97],[29,-62.14],[30,-63.36],[31,-64.75],[32,-64.87],[33,-65.89],[34,-67.04],[35,-72.2],[36,-70.63],[37,-73.53],[38,-75.24],[39,-73.3],[40,-74.35],[41,-75.28],[42,-75.86],[43,-75.05],[44,-73.47],[45,-74.01],[46,-74.5],[47,-74.74],[48,-76.99],[49,-79.18],[50,-77.78],[51,-79.62],[52,-83.52],[53,-81.31],[54,-79.12],[55,-80.48],[56,-80.81],[57,-80.57],[58,-81.1],[59,-82.23],[60,-81.6],[61,-82.77],[62,-82.42],[63,-81.6],[64,-82.25],[65,-82.04],[66,-82.3],[67,-82.82],[68,-85.21],[69,-84.11],[70,-84.83],[71,-84.53],[72,-85.36],[73,-86.17],[74,-87.71],[75,-88.1],[76,-83.95],[77,-84.74],[78,-84.06],[79,-82.58],[80,-79.32],[81,-75.41],[82,-71.65],[83,-65.88],[84,-70.56],[85,-74.08],[86,-70.15],[87,-72.01],[88,-71.35],[89,-74.58],[90,-74.68],[91,-73.82],[92,-73.76],[93,-70.95],[94,-71.74],[95,-73.58],[96,-77.61],[97,-74.67],[98,-74.44],[99,-74.87],[100,-74.37],[101,-73.73],[102,-71.5],[103,-71.91],[104,-72.98],[105,-73.85],[106,-72.4],[107,-72.63],[108,-73.22],[109,-74.55],[110,-75.58],[111,-75.0],[112,-75.46],[113,-74.11],[114,-75.16],[115,-75.31],[116,-75.26],[117,-76.78],[118,-77.04],[119,-76.25],[120,-75.61]],"2016":[[0,0.0],[1,-47.35],[2,-43.17],[3,-44.98],[4,-38.15],[5,-39.13],[6,-36.43],[7,-33.41],[8,-33.64],[9,-35.64],[10,-35.5],[11,-43.4],[12,-41.4],[13,-42.1],[14,-43.31],[15,-43.63],[16,-45.54],[17,-46.7],[18,-50.7],[19,-51.07],[20,-53.02],[21,-47.07],[22,-49.02],[23,-49.12],[24,-51.39],[25,-51.12],[26,-51.21],[27,-46.51],[28,-44.47],[29,-45.86],[30,-48.14],[31,-48.75],[32,-46.0],[33,-42.15],[34,-41.22],[35,-31.88],[36,-33.55],[37,-40.75],[38,-35.69],[39,-44.28],[40,-39.73],[41,-40.33],[42,-40.57],[43,-42.1],[44,-44.8],[45,-49.16],[46,-59.17],[47,-52.18],[48,-48.7],[49,-49.21],[50,-49.44],[51,-49.3],[52,-47.72],[53,-43.12],[54,-43.59],[55,-45.68],[56,-45.26],[57,-46.24],[58,-48.0],[59,-47.86],[60,-48.23],[61,-50.05],[62,-50.0],[63,-50.05],[64,-47.72],[65,-48.05],[66,-48.33],[67,-48.75],[68,-48.7],[69,-47.21],[70,-47.49],[71,-48.19],[72,-49.21],[73,-48.98],[74,-47.82],[75,-45.77],[76,-44.28],[77,-43.73],[78,-45.35],[79,-45.72],[80,-45.54],[81,-45.68],[82,-46.33],[83,-47.26],[84,-45.86],[85,-43.45],[86,-45.91],[87,-44.75],[88,-44.61],[89,-44.61],[90,-44.52],[91,-41.64],[92,-40.99],[93,-42.24],[94,-38.71],[95,-32.95],[96,-36.01],[97,-38.43],[98,-38.06],[99,-40.15],[100,-39.13],[101,-40.43],[102,-39.13],[103,-38.34],[104,-39.27],[105,-38.57],[106,-38.8],[107,-38.66],[108,-37.5],[109,-38.29],[110,-39.41],[111,-40.29],[112,-41.12],[113,-43.22],[114,-44.01],[115,-45.35],[116,-45.21],[117,-44.56],[118,-44.42],[119,-44.52],[120,-44.33],[121,-44.47],[122,-44.19],[123,-41.5],[124,-44.14],[125,-43.77],[126,-43.4],[127,-43.91],[128,-44.05],[129,-44.38],[130,-46.98],[131,-46.42],[132,-46.56],[133,-48.47],[134,-51.49],[135,-48.05],[136,-48.88],[137,-49.95],[138,-50.05],[139,-49.81],[140,-48.47],[141,-48.88],[142,-49.49],[143,-49.77],[144,-49.67],[145,-50.46],[146,-51.12],[147,-52.18],[148,-54.1],[149,-53.07],[150,-53.69],[151,-52.51],[152,-53.25],[153,-53.57],[154,-55.97],[155,-55.1],[156,-55.49],[157,-55.29],[158,-53.97],[159,-54.26],[160,-57.1],[161,-56.31],[162,-56.65],[163,-58.19],[164,-59.46],[165,-62.02],[166,-60.1],[167,-60.72],[168,-63.94],[169,-63.19],[170,-65.41],[171,-68.3],[172,-72.22],[173,-61.05],[174,-61.75],[175,-60.75],[176,-62.24],[177,-61.93],[178,-60.4],[179,-60.86],[180,-61.59],[181,-63.62],[182,-63.48],[183,-63.4],[184,-63.45],[185,-64.48],[186,-64.41],[187,-63.22],[188,-64.75],[189,-66.7],[190,-66.24],[191,-66.66],[192,-66.2],[193,-66.68],[194,-65.06],[195,-61.5],[196,-62.08],[197,-62.97],[198,-62.02],[199,-61.07],[200,-54.81],[201,-47.72],[202,-52.37],[203,-52.37],[204,-54.15],[205,-52.18],[206,-52.0],[207,-50.98],[208,-54.84],[209,-54.18],[210,-54.6],[211,-55.17],[212,-53.98],[213,-55.22],[214,-52.14],[215,-52.46],[216,-51.67],[217,-50.74]],"2018":[[0,0.0],[1,-4.61],[2,-9.84],[3,-26.46],[4,-29.22],[5,-27.68],[6,-27.48],[7,-19.38],[8,-26.75],[9,-29.98],[10,-31.17],[11,-26.11],[12,-26.3],[13,-26.36],[14,-22.74],[15,-13.04],[16,-17.48],[17,-25.25],[18,-21.95],[19,-27.64],[20,-36.09],[21,-32.72],[22,-41.75],[23,-51.29],[24,-44.65],[25,-47.16],[26,-42.93],[27,-38.32],[28,-39.95],[29,-43.15],[30,-39.37],[31,-41.01],[32,-35.55],[33,-34.61],[34,-34.1],[35,-32.02],[36,-35.52],[37,-34.13],[38,-37.51],[39,-40.68],[40,-43.27],[41,-39.69],[42,-41.34],[43,-41.04],[44,-39.33],[45,-38.71],[46,-40.32],[47,-39.13],[48,-40.2],[49,-40.18],[50,-39.51],[51,-40.42],[52,-42.99],[53,-47.46],[54,-50.83],[55,-49.13],[56,-52.06],[57,-49.52],[58,-51.16],[59,-51.79],[60,-57.13],[61,-57.34],[62,-58.01],[63,-61.42],[64,-62.41],[65,-61.15],[66,-61.12],[67,-60.8],[68,-62.33],[69,-62.34],[70,-63.26],[71,-63.41],[72,-65.81],[73,-68.59],[74,-68.85],[75,-73.06],[76,-72.46],[77,-72.33],[78,-73.51],[79,-73.03],[80,-70.91],[81,-73.44],[82,-73.25],[83,-74.16],[84,-73.11],[85,-72.05],[86,-72.19],[87,-71.09],[88,-69.95],[89,-65.6],[90,-65.61],[91,-65.0],[92,-62.89],[93,-64.33],[94,-64.9],[95,-63.38],[96,-60.37],[97,-57.03],[98,-57.75],[99,-56.6],[100,-55.16],[101,-50.58],[102,-57.05],[103,-53.74],[104,-54.84],[105,-52.29],[106,-51.92],[107,-53.25],[108,-52.99],[109,-52.04],[110,-45.6],[111,-45.17],[112,-43.04],[113,-44.71],[114,-47.4],[115,-47.46],[116,-47.5],[117,-49.24],[118,-52.57],[119,-52.12],[120,-48.81],[121,-49.02],[122,-50.53],[123,-50.66],[124,-53.06],[125,-51.54],[126,-51.39],[127,-50.07],[128,-51.2],[129,-54.79],[130,-59.27],[131,-58.0],[132,-59.05],[133,-59.01],[134,-60.03],[135,-63.99],[136,-60.54],[137,-60.95],[138,-59.69],[139,-59.52],[140,-58.7],[141,-56.85],[142,-56.71],[143,-57.48],[144,-57.63],[145,-57.76],[146,-58.05],[147,-58.3],[148,-63.26],[149,-62.78],[150,-65.33],[151,-66.68],[152,-63.73],[153,-65.73],[154,-65.13],[155,-65.07],[156,-63.79],[157,-62.46],[158,-62.57],[159,-63.2],[160,-67.49],[161,-66.88],[162,-68.06],[163,-67.88],[164,-69.8],[165,-69.13],[166,-70.52],[167,-69.57],[168,-68.23],[169,-68.32],[170,-66.83],[171,-67.6],[172,-67.39],[173,-66.89],[174,-66.92],[175,-65.69],[176,-65.86],[177,-66.73],[178,-69.68],[179,-68.84],[180,-69.99],[181,-69.71],[182,-69.57],[183,-68.61],[184,-66.45],[185,-65.04],[186,-66.47],[187,-67.23],[188,-68.55],[189,-67.73],[190,-67.92],[191,-68.54],[192,-66.55],[193,-67.03],[194,-67.61],[195,-67.22],[196,-67.42],[197,-67.43],[198,-68.1],[199,-69.72],[200,-70.64],[201,-71.2],[202,-70.81],[203,-71.58],[204,-71.35],[205,-71.62],[206,-73.47],[207,-75.11],[208,-74.49],[209,-76.68],[210,-77.52],[211,-77.7],[212,-80.01],[213,-80.53],[214,-80.29],[215,-79.9],[216,-77.97],[217,-79.36],[218,-79.01],[219,-80.86],[220,-80.32],[221,-81.06],[222,-80.66],[223,-80.25],[224,-80.48],[225,-80.79],[226,-80.07],[227,-79.31],[228,-79.81],[229,-80.17],[230,-80.25],[231,-79.39],[232,-79.46],[233,-79.81],[234,-80.06],[235,-83.79],[236,-83.93],[237,-84.84],[238,-86.19],[239,-86.26],[240,-86.25],[241,-87.08],[242,-87.21],[243,-85.25],[244,-85.22],[245,-84.43],[246,-84.61],[247,-86.19],[248,-85.35],[249,-85.35],[250,-84.33],[251,-82.79],[252,-83.22],[253,-82.95],[254,-84.04],[255,-84.75],[256,-84.94],[257,-84.05],[258,-84.48],[259,-83.83],[260,-83.75],[261,-83.89],[262,-84.15],[263,-84.61],[264,-84.49],[265,-84.12],[266,-84.29],[267,-84.22],[268,-84.0],[269,-84.09],[270,-84.24],[271,-86.77],[272,-86.27],[273,-86.05],[274,-86.34],[275,-85.37],[276,-85.34],[277,-85.55],[278,-85.81],[279,-85.78],[280,-85.66],[281,-85.68],[282,-85.76],[283,-85.74],[284,-85.77],[285,-85.85],[286,-85.81],[287,-85.75],[288,-85.67],[289,-86.23],[290,-86.21],[291,-86.22],[292,-86.12],[293,-86.0],[294,-86.03],[295,-85.52],[296,-85.41],[297,-84.75],[298,-84.84],[299,-85.19],[300,-85.34],[301,-85.17],[302,-85.25],[303,-85.31],[304,-85.57],[305,-87.34],[306,-87.38],[307,-87.77],[308,-87.86],[309,-87.64],[310,-89.59],[311,-90.9],[312,-90.46],[313,-91.16],[314,-91.39],[315,-92.08],[316,-91.87],[317,-92.44],[318,-92.32],[319,-91.45],[320,-91.8],[321,-92.1],[322,-91.72],[323,-91.88],[324,-92.4],[325,-92.31],[326,-92.85],[327,-93.6],[328,-93.49],[329,-93.57],[330,-93.36],[331,-93.6],[332,-93.79],[333,-93.68],[334,-93.96],[335,-94.12],[336,-94.22],[337,-94.05],[338,-93.36],[339,-92.94],[340,-92.93],[341,-91.89],[342,-92.36],[343,-91.85],[344,-90.87],[345,-90.21],[346,-90.94],[347,-90.8],[348,-91.86],[349,-90.39],[350,-90.37],[351,-90.24],[352,-90.69],[353,-90.17],[354,-89.18],[355,-89.59],[356,-89.21],[357,-89.14],[358,-88.99],[359,-89.41],[360,-89.51],[361,-89.48],[362,-91.02],[363,-91.1],[364,-91.21],[365,-91.84],[366,-90.99],[367,-91.48],[368,-91.38],[369,-91.36],[370,-91.55],[371,-91.31],[372,-91.66],[373,-91.82],[374,-91.71],[375,-91.8],[376,-91.81],[377,-91.88],[378,-91.87],[379,-92.09],[380,-92.56],[381,-92.63]],"2021\u201322":[[0,0.0],[1,-12.35],[2,-18.22],[3,-12.13],[4,-9.85],[5,-12.71],[6,-16.42],[7,-11.26],[8,-13.32],[9,-12.61],[10,-17.6],[11,-16.25],[12,-12.21],[13,-9.13],[14,-5.32],[15,-6.23],[16,-7.78],[17,-13.72],[18,-15.78],[19,-14.17],[20,-10.9],[21,-11.79],[22,-9.25],[23,-15.78],[24,-20.1],[25,-16.5],[26,-15.48],[27,-22.64],[28,-23.43],[29,-17.85],[30,-19.0],[31,-20.69],[32,-19.03],[33,-19.81],[34,-19.58],[35,-17.81],[36,-18.59],[37,-16.02],[38,-17.25],[39,-16.32],[40,-16.85],[41,-17.46],[42,-22.3],[43,-25.82],[44,-24.08],[45,-24.72],[46,-22.94],[47,-21.71],[48,-23.11],[49,-22.44],[50,-27.42],[51,-30.12],[52,-34.72],[53,-36.79],[54,-35.45],[55,-36.97],[56,-33.8],[57,-31.06],[58,-33.6],[59,-32.33],[60,-31.91],[61,-31.5],[62,-34.33],[63,-35.32],[64,-36.71],[65,-38.65],[66,-47.71],[67,-50.83],[68,-48.18],[69,-50.11],[70,-49.79],[71,-49.55],[72,-50.47],[73,-47.93],[74,-46.91],[75,-46.78],[76,-45.04],[77,-42.92],[78,-45.16],[79,-45.23],[80,-39.01],[81,-38.37],[82,-37.5],[83,-35.76],[84,-36.17],[85,-33.78],[86,-37.09],[87,-40.16],[88,-40.36],[89,-41.05],[90,-40.03],[91,-34.99],[92,-36.06],[93,-41.09],[94,-43.05],[95,-43.5],[96,-46.26],[97,-47.38],[98,-46.05],[99,-47.05],[100,-46.89],[101,-43.49],[102,-43.15],[103,-46.4],[104,-40.32],[105,-39.23],[106,-39.69],[107,-42.06],[108,-46.5],[109,-45.52],[110,-47.77],[111,-48.94],[112,-47.32],[113,-44.2],[114,-46.68],[115,-47.68],[116,-47.36],[117,-48.51],[118,-47.04],[119,-46.44],[120,-43.33],[121,-42.46],[122,-39.79],[123,-39.77],[124,-41.52],[125,-40.76],[126,-39.22],[127,-38.04],[128,-36.46],[129,-36.49],[130,-35.74],[131,-32.71],[132,-31.79],[133,-30.45],[134,-30.8],[135,-32.91],[136,-29.48],[137,-29.57],[138,-27.98],[139,-28.02],[140,-30.25],[141,-35.16],[142,-33.9],[143,-34.75],[144,-33.32],[145,-34.34],[146,-39.06],[147,-38.05],[148,-36.25],[149,-38.26],[150,-37.84],[151,-37.4],[152,-38.81],[153,-37.49],[154,-36.54],[155,-37.08],[156,-38.93],[157,-39.39],[158,-39.94],[159,-40.25],[160,-38.48],[161,-42.59],[162,-40.94],[163,-39.96],[164,-42.44],[165,-44.19],[166,-42.19],[167,-41.59],[168,-43.1],[169,-39.89],[170,-43.8],[171,-44.91],[172,-46.11],[173,-48.54],[174,-54.1],[175,-52.09],[176,-57.64],[177,-59.9],[178,-58.82],[179,-57.96],[180,-56.14],[181,-58.65],[182,-57.27],[183,-60.82],[184,-58.74],[185,-59.91],[186,-59.64],[187,-58.23],[188,-59.68],[189,-59.54],[190,-60.24],[191,-63.12],[192,-64.74],[193,-63.36],[194,-62.96],[195,-59.19],[196,-60.29],[197,-62.72],[198,-62.5],[199,-63.71],[200,-63.17],[201,-63.1],[202,-61.99],[203,-62.92],[204,-63.33],[205,-63.41],[206,-65.96],[207,-68.73],[208,-70.46],[209,-75.38],[210,-75.23],[211,-74.79],[212,-78.17],[213,-77.79],[214,-81.68],[215,-76.95],[216,-76.95],[217,-77.01],[218,-78.51],[219,-76.63],[220,-74.92],[221,-74.58],[222,-75.47],[223,-75.6],[224,-76.6],[225,-77.53],[226,-78.18],[227,-78.34],[228,-78.2],[229,-78.05],[230,-76.47],[231,-76.81],[232,-75.74],[233,-74.7],[234,-75.01],[235,-75.12],[236,-76.11],[237,-77.57],[238,-78.78],[239,-77.24],[240,-75.64],[241,-74.79],[242,-72.35],[243,-72.63],[244,-67.73],[245,-68.46],[246,-68.92],[247,-67.77],[248,-68.57],[249,-68.33],[250,-67.3],[251,-70.45],[252,-70.53],[253,-66.55],[254,-64.73],[255,-64.69],[256,-65.33],[257,-65.63],[258,-66.57],[259,-66.62]]}};
+(function(){
+  'use strict';
+  const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // ---------- dates ----------
+  const DAY = 86400000;
+  const U = s => { const [y,m,d] = s.split('-').map(Number); return Date.UTC(y, m-1, d); };
+  const addDays = (ms, n) => ms + n*DAY;
+  const diffDays = (a, b) => Math.round((b - a)/DAY);
+  const dateOf = t => { const y = Math.floor(t); return Date.UTC(y, 0, 1) + Math.round((t - y)*365.25)*DAY; };
+  const tOf = ms => { const d = new Date(ms); const y = d.getUTCFullYear(); const doy = Math.round((ms - Date.UTC(y,0,1))/DAY) + 1; return y + (doy - 1)/365.25; };
+  const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const WD = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const fmtD = ms => { const d = new Date(ms); return `${MON[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`; };
+  const fmtDW = ms => `${fmtD(ms)} (${WD[new Date(ms).getUTCDay()]})`;
+  const usd = v => '$' + v.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+  const usd0 = v => '$' + Math.round(v).toLocaleString('en-US');
+  const pct = v => (v >= 0 ? '+' : '−') + Math.abs(v*100).toFixed(1) + '%';
+  const nf = n => n.toLocaleString('en-US');
+
+  // ---------- facts (from the guide's verified pivots) ----------
+  const PEAK = {ms: U('2025-08-24'), p: 4953.73};
+  const TODAY = {ms: U('2026-11-18'), p: 1755.70, live: true};   // live intraday price (see live_snapshot.json)
+  let prevDays = null;
+  let cmpHL = null;   // which bear-market line is hovered in the comparison chart
+  // 200-week simple moving average of the weekly closes (same weekly series the chart uses)
+  const WMA_COL = '#fcec60';
+  const NOW_COL = '#f472b6';   // current cycle's low so far (pink: stands apart from the confirmed red lows)
+  const WMA200 = []; { let sum = 0; DATA.weekly.forEach((p, i) => { sum += p[1]; if (i >= 200) sum -= DATA.weekly[i - 200][1]; if (i >= 199) WMA200.push([p[0], sum/200]); }); }
+  const wmaAt = t => { let best = null, bd = 1e9; for (const q of WMA200){ const d = Math.abs(q[0] - t); if (d < bd){ bd = d; best = q; } } return bd < 0.03 ? best[1] : null; };
+  let showWMA = false; try { showWMA = localStorage.getItem('ethClockWMA') === '1'; } catch(e){}   // days value before a "Try …" chip was clicked, so it can be undone
+  const LOW = {ms: U('2026-06-06'), p: 1506.51};
+  const HALVINGS = [['2nd BTC','2016-07-09'],['3rd BTC','2020-05-11'],['4th BTC','2024-04-20']];
+  const PIVOTS = [
+    ['2015-08-07',3.5366,'peak'],['2015-10-21',0.4209,'bottom'],['2016-06-17',21.52,'peak'],['2016-12-06',5.9789,'bottom'],
+    ['2018-01-13',1432.88,'peak'],['2018-12-15',82.83,'bottom'],['2021-11-16',4891.70,'peak'],['2022-06-18',896.11,'bottom'],
+    ['2025-08-24',4953.73,'peak']];
+  const BEARS = [
+    {name:'2015', pk:'2015-08-07', pp:3.5366, bt:'2015-10-21', bp:0.4209},
+    {name:'2016', pk:'2016-06-17', pp:21.52, bt:'2016-12-06', bp:5.9789},
+    {name:'2018', pk:'2018-01-13', pp:1432.88, bt:'2018-12-15', bp:82.83},
+    {name:'2021–22', pk:'2021-11-16', pp:4891.70, bt:'2022-06-18', bp:896.11}];
+
+  // ---------- state ----------
+  const S = {days:275, dd:75, showPeak:false, halv:'2028-04-12', hp:533, mult:3, view:'cycle'};
+  let seasonsOn = false;
+  const SEAS = {
+    winter:{name:'Winter', icon:'❄️', sub:'Bear market', col:'#7dd3fc'},
+    spring:{name:'Spring', icon:'🌱', sub:'Recovery', col:'#4ade80'},
+    summer:{name:'Summer', icon:'☀️', sub:'Bull run to the old high', short:'Bull run', col:'#facc15'},
+    fall:  {name:'Fall',   icon:'🍂', sub:'New highs, euphoria', short:'New highs', col:'#e9875a'}
+  };
+  // bottom, halving, peak for each completed cycle (CoinMarketCap pivots)
+  // bottom, halving, first new all-time high after the halving (end of summer), peak  — CoinMarketCap daily highs
+  const CYC = [
+    ['2015-10-21', '2016-07-09', '2017-03-11', '2018-01-13'],
+    ['2018-12-15', '2020-05-11', '2021-01-25', '2021-11-16'],
+    ['2022-06-18', '2024-04-20', '2025-08-24', '2025-08-24']
+  ];
+  const AVG_SUMMER = Math.round((245 + 259)/2);   // days from halving to ETH's first new all-time high, cycles 1–2 (cycle 3 = the peak day itself, 491)
+  function seasonSpans(){
+    // Morgan Stanley's four seasons: Winter = peak → bottom; Spring = bottom → halving;
+    // Summer = halving → price passes the old high; Fall = new highs → the cycle peak
+    const out = [];
+    out.push({k:'winter', a:U('2015-08-07'), b:U('2015-10-21')});
+    CYC.forEach(([bt, hv, br, pk], i) => {
+      const B = U(bt), Hv = U(hv), Br = U(br), P = U(pk);
+      out.push({k:'spring', a:B, b:Hv}, {k:'summer', a:Hv, b:Br}, {k:'fall', a:Br, b:P});
+      const next = CYC[i+1];
+      if (next) out.push({k:'winter', a:P, b:U(next[0])});
+    });
+    const sc = scenario(); const wEnd = Math.max(TODAY.ms, sc.bMs);
+    out.push({k:'winter', a:PEAK.ms, b:wEnd, now:true});
+    if (S.showPeak){
+      const Hv = sc.hMs, P = sc.pkMs, mid = Math.min(P, addDays(Hv, AVG_SUMMER));
+      if (Hv > wEnd) out.push({k:'spring', a:wEnd, b:Hv, proj:true});
+      if (P > Hv) out.push({k:'summer', a:Hv, b:mid, proj:true}, {k:'fall', a:mid, b:P, proj:true});
+    }
+    return out;
+  }
+  try { const h = window.claude && window.claude.hot && window.claude.hot.data; if (h && h.days) Object.assign(S, h); } catch(e) {}
+  try { window.claude && window.claude.hot && window.claude.hot.snapshot && window.claude.hot.snapshot(() => S); } catch(e) {}
+
+  function closeOn(ms){
+    const t = tOf(ms); let best = null, bd = 1e9;
+    for (const p of DATA.daily){ const d = Math.abs(p[0] - t); if (d < bd){ bd = d; best = p; } }
+    return best && bd < 0.004 ? best[1] : null;
+  }
+  function scenario(){
+    const bMs = addDays(PEAK.ms, S.days);
+    const bP = PEAK.p * (1 - S.dd/100);
+    const hMs = U(S.halv);
+    const pkMs = addDays(hMs, S.hp);
+    const pkP = bP * S.mult;
+    return {bMs, bP, hMs, pkMs, pkP, future: bMs > TODAY.ms};
+  }
+
+  // ---------- chart geometry ----------
+  const svg = document.getElementById('chart');
+  const NS = 'http://www.w3.org/2000/svg';
+  let W = 860, H = 600; const L = 62, R = 18, T = 30, B = 40;
+  const LIM = {t0:2015.4, t1:2031.0, minSpan:0.08};
+  function viewFor(name){
+    const sc = scenario(); const top = S.showPeak ? sc.pkP : 0;
+    if (name === 'full') return {t0:2015.5, t1:2030.6, v0:0.25, v1:Math.max(40000, top*2)};
+    if (name === 'custom') { if (!autoScale) return Object.assign({}, cur); const y = autoY(cur.t0, cur.t1); return {t0:cur.t0, t1:cur.t1, v0:y[0], v1:y[1]}; }
+    const RANGES = {c1:[2015.55, 2019.3], c2:[2018.75, 2022.85]};
+    if (RANGES[name]) { const [a, b] = RANGES[name]; const y = autoY(a, b); return {t0:a, t1:b, v0:y[0], v1:y[1]}; }
+    return {t0:2022.3, t1:2030.6, v0:Math.min(500, sc.bP*0.6), v1:Math.max(30000, top*1.7)};
+  }
+  // price-axis auto-fit to what is on screen (like TradingView's auto scale)
+  function autoY(t0, t1){
+    const sc = scenario(); const vals = [];
+    const ser = t0 >= DATA.daily[0][0] ? DATA.daily : DATA.weekly;
+    for (const p of ser) if (p[0] >= t0 && p[0] <= t1) vals.push(p[1]);
+    PIVOTS.forEach(([d, p]) => { const t = tOf(U(d)); if (t >= t0 && t <= t1) vals.push(p); });
+    if (showWMA) for (const p of WMA200) if (p[0] >= t0 && p[0] <= t1) vals.push(p[1]);
+    const tB = tOf(sc.bMs), tP = tOf(sc.pkMs), tT = tOf(TODAY.ms);
+    if (tB >= t0 && tB <= t1) vals.push(sc.bP);
+    if (S.showPeak && tP >= t0 && tP <= t1) vals.push(sc.pkP);
+    if (S.showPeak && t1 > tT && t0 < tP) { vals.push(Math.min(sc.bP, TODAY.p)); vals.push(sc.pkP); }
+    if (!vals.length) return [cur.v0, cur.v1];
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    const span = Math.max(Math.log10(hi) - Math.log10(lo), 0.05);
+    return [Math.pow(10, Math.log10(lo) - span*0.14), Math.pow(10, Math.log10(hi) + span*(seasonsOn && (t1 - t0) < 12 ? 0.5 : 0.22))];
+  }
+  let cur = {t0:2022.3, t1:2030.6, v0:500, v1:30000};
+  const X = t => L + (t - cur.t0)/(cur.t1 - cur.t0)*(W - L - R);
+  const Y = v => T + (Math.log10(cur.v1) - Math.log10(v))/(Math.log10(cur.v1) - Math.log10(cur.v0))*(H - T - B);
+  const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent||svg).appendChild(e); return e; };
+  const txt = (s, attrs, parent) => { const e = el('text', attrs, parent); e.textContent = s; return e; };
+
+  // projection path in log space: smooth cosine ease between points
+  function curve(t0, p0, t1, p1, shape){
+    const pts = []; const n = 60;
+    for (let i = 0; i <= n; i++){
+      const u = i/n;
+      const e = shape === 'up' ? (u < 1 ? Math.pow(u, 1.6) * (3 - 2*u) / (1 + 0*u) : 1) : (1 - Math.cos(Math.PI*u))/2;
+      const lp = Math.log10(p0) + (Math.log10(p1) - Math.log10(p0)) * Math.min(1, e);
+      pts.push([t0 + (t1 - t0)*u, Math.pow(10, lp)]);
+    }
+    return pts;
+  }
+  const pathOf = pts => pts.map((p,i) => (i ? 'L' : 'M') + X(p[0]).toFixed(1) + ',' + Y(p[1]).toFixed(1)).join('');
+
+  let drawProgress = 1;     // 0..1 for history line draw-on
+  let projProgress = 1;     // 0..1 for projection draw-on
+  let shownScn = null;      // animated scenario values
+
+  function render(){
+    const s = shownScn || scenario();
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    const defs = el('defs', {});
+    const clip = el('clipPath', {id:'plot'}, defs); el('rect', {x:L, y:T, width:W-L-R, height:H-T-B}, clip);
+    const grad = el('linearGradient', {id:'area', x1:'0', y1:'0', x2:'0', y2:'1'}, defs);
+    el('stop', {offset:'0%', 'stop-color':'#e8ecf4', 'stop-opacity':'0.10'}, grad);
+    el('stop', {offset:'100%', 'stop-color':'#e8ecf4', 'stop-opacity':'0'}, grad);
+    const g = el('g', {'clip-path':'url(#plot)'});
+    const obs = [];  // screen-space rects the label must not cover
+    const addPts = pts => pts.forEach(p => obs.push({x:X(p[0])-1, y:Y(p[1])-1, w:2, h:2}));
+    const addText = (x, y, str, size, anchor) => { const w = str.length * size * 0.62; const x0 = anchor === 'end' ? x - w : (anchor === 'middle' ? x - w/2 : x); obs.push({x:x0, y:y - size, w, h:size + 3}); };
+    // bear markets (historical + current)
+    const seasNow = seasonsOn && (cur.t1 - cur.t0) < 12;
+    const seasList = seasNow ? seasonSpans().filter(z => tOf(z.b) > cur.t0 && tOf(z.a) < cur.t1) : [];
+    if (seasNow){
+      seasList.forEach(z => { const c = SEAS[z.k].col; const a = Math.max(L, X(tOf(z.a))), e = Math.min(W - R, X(tOf(z.b)));
+        if (e - a < 1) return;
+        el('rect', {x:a, y:T, width:e - a, height:H-T-B, fill:c, 'fill-opacity':z.proj ? 0.05 : 0.10}, g);
+        el('rect', {x:a, y:T, width:e - a, height:5, fill:c, opacity:z.proj ? 0.45 : 0.9}, g);
+        if (z.proj) el('line', {x1:a, x2:a, y1:T, y2:H-B, stroke:c, 'stroke-width':0.8, 'stroke-dasharray':'3 4', opacity:0.5}, g);
+      });
+    } else {
+    BEARS.forEach(b => { const a = X(tOf(U(b.pk))), z = X(tOf(U(b.bt))); el('rect', {x:a, y:T, width:Math.max(1, z-a), height:H-T-B, fill:'var(--bear)', 'fill-opacity':0.13}, g); });
+    const curEnd = Math.max(TODAY.ms, s.bMs);
+    el('rect', {x:X(tOf(PEAK.ms)), y:T, width:X(tOf(curEnd)) - X(tOf(PEAK.ms)), height:H-T-B, fill:'var(--bear)', 'fill-opacity':0.08}, g);
+    }
+    // past bottom window
+    const w0 = X(tOf(addDays(PEAK.ms, 214))), w1 = X(tOf(addDays(PEAK.ms, 336)));
+    el('rect', {x:w0, y:T, width:w1-w0, height:H-T-B, fill:'var(--btc)', 'fill-opacity':0.16}, g);
+    // grid
+    const ticks = [0.1,1,10,100,1000,10000,100000,1000000].filter(v => v >= cur.v0*0.999 && v <= cur.v1);
+    const extra = cur.v0 > 1000 ? [20000,50000,200000,500000] : [];
+    ticks.concat(extra).forEach(v => {
+      const y = Y(v); if (y < T || y > H-B) return;
+      el('line', {x1:L, x2:W-R, y1:y, y2:y, stroke:'var(--line)', 'stroke-width':1});
+      txt(v >= 1e6 ? '$' + (v/1e6) + 'M' : (v >= 1000 ? '$' + (v/1000) + 'K' : (v >= 1 ? '$' + v : '$' + v.toFixed(2))), {x:L-8, y:y+4, 'text-anchor':'end', fill:'var(--muted)', 'font-size':11, 'font-family':'JetBrains Mono, monospace'});
+    });
+    const span = cur.t1 - cur.t0;
+    if (span > 2.2){
+      const yStep = span > 12 ? 2 : 1;
+      for (let yr = Math.ceil(cur.t0); yr <= Math.floor(cur.t1); yr += 1){
+        if ((yr % yStep) !== 0) continue;
+        txt(String(yr), {x:X(yr), y:H-B+20, 'text-anchor':'middle', fill:'var(--muted)', 'font-size':11, 'font-family':'JetBrains Mono, monospace'});
+      }
+    } else {
+      const mStep = span > 1.2 ? 3 : (span > 0.5 ? 2 : 1);
+      const d0 = new Date(Date.UTC(Math.floor(cur.t0), 0, 1));
+      for (let k = 0; k < 400; k++){
+        const ms = Date.UTC(d0.getUTCFullYear(), k, 1); const t = tOf(ms); if (t > cur.t1) break; if (t < cur.t0) continue;
+        const m = new Date(ms).getUTCMonth(); if (m % mStep !== 0) continue;
+        txt(m === 0 ? String(new Date(ms).getUTCFullYear()) : MON[m], {x:X(t), y:H-B+20, 'text-anchor':'middle', fill:m === 0 ? 'var(--text)' : 'var(--muted)', 'font-size':11, 'font-family':'JetBrains Mono, monospace'});
+      }
+    }
+    // halvings (past + estimated next)
+    HALVINGS.concat([['5th (est.)', S.halv]]).forEach(([n, d], i) => {
+      const x = X(tOf(U(d))); if (x < L || x > W-R) return;
+      const est = i === 4;
+      el('line', {x1:x, x2:x, y1:T, y2:H-B, stroke:'var(--halving)', 'stroke-width':1.4, 'stroke-dasharray':est ? '2 4' : '5 4', opacity:est ? 0.7 : 1});
+      txt(n + ' halving', {x:x+5, y:T+12, fill:'var(--halving)', 'font-size':11, 'font-weight':600});
+      txt(fmtD(U(d)), {x:x+5, y:T+25, fill:'var(--muted)', 'font-size':10.5});
+      obs.push({x:x+3, y:T, w:96, h:30});
+    });
+    // season labels (top ribbon)
+    if (seasNow){
+      seasList.forEach(z => {
+        const S2 = SEAS[z.k]; const a = Math.max(L, X(tOf(z.a))), e = Math.min(W - R, X(tOf(z.b))); const w = e - a; if (w < 22) return;
+        const cx0 = (a + e)/2;
+        const tw = (str, fs) => str.length*fs*0.58 + 20;   // + room for the emoji
+        const sub0 = z.proj ? 'projected' : (z.now ? S2.sub + ' (now)' : S2.sub);
+        const opts = [S2.name + (z.now ? ' (now)' : ''), S2.name];
+        const nm = opts.find(o => tw(o, 13) <= w - 4);
+        if (nm){
+          const bw = tw(nm, 13);
+          txt(`${S2.icon} ${nm}`, {x:cx0, y:T + 48, 'text-anchor':'middle', fill:S2.col, 'font-size':13, 'font-weight':800, opacity:z.proj ? 0.75 : 1}, g);
+          obs.push({x:cx0 - bw/2, y:T + 35, w:bw, h:16});
+          const sub = [sub0, S2.sub, S2.short || S2.sub].find(o => o.length*11*0.55 <= w - 4);
+          if (sub){ txt(sub, {x:cx0, y:T + 63, 'text-anchor':'middle', fill:S2.col, 'font-size':11, opacity:z.proj ? 0.6 : 0.85}, g); obs.push({x:cx0 - sub.length*3.1, y:T + 53, w:sub.length*6.2, h:13}); }
+        } else {
+          txt(S2.icon, {x:cx0, y:T + 48, 'text-anchor':'middle', 'font-size':14, opacity:z.proj ? 0.75 : 1}, g);
+          obs.push({x:cx0 - 9, y:T + 35, w:18, h:16});
+        }
+      });
+    }
+    // price history
+    const series = (cur.t0 >= DATA.daily[0][0]) ? DATA.daily : DATA.weekly;
+    const vis = series.filter(p => p[0] >= cur.t0 - 0.05 && p[0] <= cur.t1);
+    const nShow = Math.max(2, Math.round(vis.length * drawProgress));
+    const shown = vis.slice(0, nShow);
+    if (shown.length > 1){
+      const d = pathOf(shown);
+      const last = shown[shown.length-1];
+      el('path', {d: d + `L${X(last[0]).toFixed(1)},${H-B}L${X(shown[0][0]).toFixed(1)},${H-B}Z`, fill:'url(#area)'}, g);
+      el('path', {d, fill:'none', stroke:'var(--text)', 'stroke-width':1.5, 'stroke-linejoin':'round'}, g);
+      addPts(shown);
+    }
+    // 200-week moving average (indicator toggle)
+    if (showWMA){
+      const lim = shown.length ? shown[shown.length - 1][0] : cur.t0;
+      const wv = WMA200.filter(p => p[0] >= cur.t0 - 0.1 && p[0] <= Math.min(cur.t1 + 0.1, lim + 0.02));
+      if (wv.length > 1){
+        el('path', {d:pathOf(wv), fill:'none', stroke:WMA_COL, 'stroke-width':2, 'stroke-linejoin':'round', 'stroke-linecap':'round'}, g);
+        addPts(wv);
+        const lp = wv[wv.length - 1], lx = X(lp[0]), ly = Y(lp[1]);
+        if (drawProgress >= 0.999 && lx > L && lx <= W - R + 1){
+          el('circle', {cx:lx, cy:ly, r:3.5, fill:WMA_COL, stroke:'var(--ink)', 'stroke-width':1.2}, g);
+          const lab = '200W MA ' + usd0(lp[1]); const rt = lx < W - R - 150;
+          const tx = rt ? lx + 26 : lx - 26, ty = ly + 22;
+          txt(lab, {x:tx, y:ty, 'text-anchor':rt ? 'start' : 'end', fill:WMA_COL, 'font-size':11.5, 'font-weight':700, 'font-family':'JetBrains Mono, monospace'}, g);
+          addText(tx, ty, lab, 11.5, rt ? 'start' : 'end');
+        }
+      }
+    }
+    // pivots
+    const hist = drawProgress >= 0.999;
+    // During the play-through, each ATH / winter-low price pops in the moment the line crosses it.
+    const frontT = shown.length ? shown[shown.length - 1][0] : cur.t0;
+    const fadeSpan = Math.max(0.02, (cur.t1 - cur.t0) * 0.04);
+    const reveal = tp => hist ? 1 : Math.max(0, Math.min(1, (frontT - tp) / fadeSpan));
+    {
+      PIVOTS.forEach(([d, p, k]) => {
+        const tp = tOf(U(d)); const a = reveal(tp); if (a <= 0) return;
+        const x = X(tp), y = Y(p); if (x < L-2 || x > W-R) return;
+        const up = k === 'peak';
+        el('circle', {cx:x, cy:y, r:(5*Math.max(0.4, a)).toFixed(2), opacity:a.toFixed(3), fill:up ? 'var(--good)' : 'var(--bear)', stroke:'var(--ink)', 'stroke-width':1.5}, g);
+        const lw = usd(p).length*17*0.62, lxx = Math.max(L + lw/2 + 3, Math.min(W - R - lw/2 - 3, x));
+        const rise = (1 - a) * 8;   // small pop upward/downward as it fades in
+        if (up){   // cycle all-time high: green
+          txt(usd(p), {x:lxx, y:y-13+rise, opacity:a.toFixed(3), 'text-anchor':'middle', fill:'var(--good)', 'font-size':17, 'font-weight':800, 'font-family':'JetBrains Mono, monospace'}, g);
+          addText(lxx, y-13, usd(p), 17, 'middle');
+        } else if (y + 24 > H - B - 30) {   // low sits near the floor: put the price beside the dot, clear of the drawdown labels
+          txt(usd(p), {x:x + 10, y:y + 5, opacity:a.toFixed(3), 'text-anchor':'start', fill:'var(--bear)', 'font-size':17, 'font-weight':800, 'font-family':'JetBrains Mono, monospace'}, g);
+          addText(x + 10, y + 5, usd(p), 17, 'start');
+        } else {   // winter low (cycle bottom): red, same size
+          txt(usd(p), {x:lxx, y:Math.min(H - B - 4, y+24) - rise, opacity:a.toFixed(3), 'text-anchor':'middle', fill:'var(--bear)', 'font-size':17, 'font-weight':800, 'font-family':'JetBrains Mono, monospace'}, g);
+          addText(lxx, Math.min(H - B - 4, y+24), usd(p), 17, 'middle');
+        }
+      });
+      // drawdown labels for historical bears (appear when the line reaches each bottom)
+      let ddRight = -1e9;   // right edge of the last drawdown label, so short early bears (2015, 2016) never print on top of each other
+      BEARS.forEach(b => {
+        const av = reveal(tOf(U(b.bt))); if (av <= 0) return;
+        const a = X(tOf(U(b.pk))), z = X(tOf(U(b.bt))); const cx = (a+z)/2; if (cx < L || cx > W-R) return;
+        const dl = '−' + ((1 - b.bp/b.pp)*100).toFixed(1) + '%';
+        const lw = dl.length*17*0.62; if (cx - lw/2 < ddRight + 6 || (z - a) < lw*0.45) return; ddRight = cx + lw/2;
+        txt(dl, {x:cx, y:H-B-12, opacity:av.toFixed(3), 'text-anchor':'middle', fill:'var(--bear)', 'font-size':17, 'font-weight':800, 'font-family':'JetBrains Mono, monospace'}, g);
+        addText(cx, H-B-12, dl, 17, 'middle');
+      });
+      // current bear: drop to the low so far, in its own colour (not confirmed as the bottom yet)
+      { const av = reveal(tOf(LOW.ms));
+        const a = X(tOf(PEAK.ms)), z = X(tOf(TODAY.ms)), cx = (a + z)/2;
+        if (av > 0 && cx > L && cx < W - R){
+          const dl = '−' + ((1 - LOW.p/PEAK.p)*100).toFixed(1) + '%';
+          const t = el('text', {x:cx, y:H-B-12, opacity:av.toFixed(3), 'text-anchor':'middle', fill:NOW_COL, 'font-size':17, 'font-weight':800, 'font-family':'JetBrains Mono, monospace'}, g);
+          const t1 = document.createElementNS(NS, 'tspan'); t1.textContent = dl; t.appendChild(t1);
+          const t2 = document.createElementNS(NS, 'tspan'); t2.setAttribute('dx', '4'); t2.setAttribute('font-size', '11'); t2.setAttribute('font-weight', '600'); t2.textContent = '(so far)'; t.appendChild(t2);
+          addText(cx, H-B-12, dl + '   (so far)', 17*0.8, 'middle');
+        } }
+      // lowest so far
+      const al = reveal(tOf(LOW.ms));
+      if (al > 0){ const lx = X(tOf(LOW.ms)), ly = Y(LOW.p);   // current winter low so far: its own colour, hollow because not confirmed
+        el('circle', {cx:lx, cy:ly, r:5, opacity:al.toFixed(3), fill:'var(--ink)', stroke:NOW_COL, 'stroke-width':2}, g);
+        if (cur.t1 - cur.t0 < 12){
+        txt(usd(LOW.p), {x:lx - 6, y:ly + 24, opacity:al.toFixed(3), 'text-anchor':'end', fill:NOW_COL, 'font-size':17, 'font-weight':800, 'font-family':'JetBrains Mono, monospace'}, g);
+        txt('low so far, Jun 6, 2026', {x:lx - 6, y:ly + 39, opacity:al.toFixed(3), 'text-anchor':'end', fill:NOW_COL, 'font-size':11}, g);
+        addText(lx - 6, ly + 24, usd(LOW.p), 17, 'end'); addText(lx - 6, ly + 39, 'low so far, Jun 6, 2026', 11, 'end'); } }
+    }
+    // projection
+    if (hist && projProgress > 0){
+      const tT = tOf(TODAY.ms), tB = tOf(s.bMs);
+      const pp = [];
+      if (s.future) pp.push(...curve(tT, TODAY.p, tB, s.bP, 'down'));
+      if (S.showPeak){
+        const startT = s.future ? tB : tT, startP = s.future ? s.bP : TODAY.p;
+        const up = curve(startT, startP, tOf(s.pkMs), s.pkP, 'up');
+        pp.push(...(pp.length ? up.slice(1) : up));
+      }
+      if (pp.length){
+        const k = Math.max(2, Math.round(pp.length * projProgress));
+        el('path', {d:pathOf(pp.slice(0,k)), fill:'none', stroke:'var(--btc)', 'stroke-width':2.2, 'stroke-dasharray':'7 5', 'stroke-linecap':'round'}, g);
+        addPts(pp.slice(0,k));
+      }
+      if (projProgress >= 0.999){
+        // bottom marker
+        const bx = X(tB), by = Y(s.bP);
+        el('line', {x1:bx, x2:bx, y1:by, y2:H-B, stroke:'var(--btc)', 'stroke-width':1, 'stroke-dasharray':'2 3', opacity:0.8}, g);
+        el('line', {x1:X(tOf(PEAK.ms)), x2:bx, y1:by, y2:by, stroke:'var(--btc)', 'stroke-width':1, 'stroke-dasharray':'2 3', opacity:0.5}, g);
+        el('circle', {cx:bx, cy:by, r:6, fill:s.future ? 'var(--btc)' : 'none', stroke:'var(--btc)', 'stroke-width':2}, g);
+        const right = bx < W - 280; const roomy = (cur.t1 - cur.t0) < 12;
+        if (roomy) txt('Bottom ' + fmtD(s.bMs), {x:right ? bx+10 : bx-10, y:by+20, 'text-anchor':right ? 'start' : 'end', fill:'var(--btc)', 'font-size':12, 'font-weight':700}, g);
+        if (roomy){ const bt = el('text', {x:right ? bx+10 : bx-10, y:by+41, 'text-anchor':right ? 'start' : 'end', fill:'var(--bear)', 'font-size':17, 'font-weight':800, 'font-family':'JetBrains Mono, monospace'}, g);
+          const b1 = document.createElementNS(NS, 'tspan'); b1.textContent = usd(s.bP); bt.appendChild(b1);
+          const b2 = document.createElementNS(NS, 'tspan'); b2.setAttribute('font-size', '12'); b2.setAttribute('font-weight', '600'); b2.setAttribute('dx', '6'); b2.textContent = '(−' + S.dd.toFixed(1) + '%)\u2009*'; bt.appendChild(b2); }
+        if (roomy) addText(right ? bx+10 : bx-10, by+20, 'Bottom ' + fmtD(s.bMs), 12, right ? 'start' : 'end'); if (roomy) addText(right ? bx+10 : bx-10, by+41, usd(s.bP) + ' (−' + S.dd.toFixed(1) + '%)', 14.5, right ? 'start' : 'end'); obs.push({x:bx-7, y:by-7, w:14, h:14});
+        if (S.showPeak){
+          const px = X(tOf(s.pkMs)), py = Y(s.pkP);
+          el('circle', {cx:px, cy:py, r:5, fill:'var(--ink)', stroke:'var(--btc)', 'stroke-width':2}, g);
+          const pr = px < W - 170;
+          if (roomy) txt('Next peak ' + fmtD(s.pkMs), {x:pr ? px+9 : px-9, y:py-37, 'text-anchor':pr ? 'start' : 'end', fill:'var(--btc)', 'font-size':11.5, 'font-weight':700}, g);
+          if (roomy) txt(usd(s.pkP) + '\u2009*', {x:pr ? px+9 : px-9, y:py-15, 'text-anchor':pr ? 'start' : 'end', fill:'var(--good)', 'font-size':17, 'font-weight':800, 'font-family':'JetBrains Mono, monospace'}, g);
+          if (roomy){ addText(pr ? px+9 : px-9, py-37, 'Next peak ' + fmtD(s.pkMs), 11.5, pr ? 'start' : 'end'); addText(pr ? px+9 : px-9, py-15, usd(s.pkP) + '\u2009*', 17, pr ? 'start' : 'end'); }
+        }
+      }
+    }
+    // play-head readout while the history draws
+    if (!hist && shown.length > 1){
+      const tip = shown[shown.length - 1]; const tx2 = X(tip[0]), ty2 = Y(tip[1]); const dms = dateOf(tip[0]);
+      el('circle', {cx:tx2, cy:ty2, r:4.5, fill:'var(--btc)', stroke:'var(--ink)', 'stroke-width':2}, g);
+      const dd = new Date(dms);
+      txt(MON[dd.getUTCMonth()] + ' ' + dd.getUTCFullYear(), {x:L + 14, y:T + 60, fill:'var(--text)', 'font-size':30, 'font-weight':800, 'font-family':'Bricolage Grotesque, sans-serif'}, g);
+      txt(usd(tip[1]), {x:L + 14, y:T + 86, fill:'var(--btc)', 'font-size':18, 'font-weight':700, 'font-family':'JetBrains Mono, monospace'}, g);
+    }
+    // you are here
+    if (hist){
+      const tx = X(tOf(TODAY.ms)), ty = Y(TODAY.p);
+      const pulse = el('circle', {cx:tx, cy:ty, r:6, fill:'var(--btc)', class:reduce ? '' : 'pulse', opacity:0.9}, g);
+      const dot = el('circle', {cx:tx, cy:ty, r:5, fill:'var(--btc)', stroke:'var(--ink)', 'stroke-width':2}, g);
+      queueMicrotask(() => { g.appendChild(pulse); g.appendChild(dot); });
+      if (tx >= L && tx <= W - R){
+        const bw = 156, bh = 38, pad = 6;
+        const inPlot = c => c.x >= L + 2 && c.x + bw <= W - R - 2 && c.y >= T + 2 && c.y + bh <= H - B - 2;
+        const hits = c => obs.some(o => o.x < c.x + bw + pad && o.x + o.w > c.x - pad && o.y < c.y + bh + pad && o.y + o.h > c.y - pad);
+        const cands = [];
+        for (const dy of [-90, -130, -170, 50, 90, 130]) for (const dx of [-bw - 18, 18, -bw/2]) cands.push({x:tx + dx, y:ty + dy});
+        cands.push({x:tx - bw/2, y:T + 40}, {x:tx - bw/2, y:H - B - bh - 30}, {x:L + 8, y:T + 40}, {x:W - R - bw - 8, y:T + 40});
+        let c = cands.find(k => inPlot(k) && !hits(k));
+        if (!c) c = cands.find(inPlot) || {x:Math.max(L + 2, tx - bw/2), y:T + 40};
+        const ax = Math.min(Math.max(tx, c.x + 10), c.x + bw - 10), ay = c.y + bh/2 > ty ? c.y : c.y + bh;
+        el('line', {x1:tx, y1:ty, x2:ax, y2:ay, stroke:'var(--btc)', 'stroke-width':1, 'stroke-dasharray':'2 3'}, g);
+        el('rect', {x:c.x, y:c.y, width:bw, height:bh, rx:7, fill:'var(--ink)', stroke:'var(--btc)', 'stroke-width':1}, g);
+        txt('YOU ARE HERE', {x:c.x + bw/2, y:c.y + 15, 'text-anchor':'middle', fill:'var(--btc)', 'font-size':10.5, 'font-weight':700, 'letter-spacing':'0.08em'}, g);
+        txt(fmtD(TODAY.ms) + ', ' + usd(TODAY.p), {x:c.x + bw/2, y:c.y + 30, 'text-anchor':'middle', fill:'var(--text)', 'font-size':10, 'font-family':'JetBrains Mono, monospace'}, g);
+      }
+    }
+    // frame
+    el('line', {x1:L, x2:W-R, y1:H-B, y2:H-B, stroke:'var(--line)'});
+    { const sb = document.getElementById('seasBtn'); if (sb) sb.hidden = (cur.t1 - cur.t0) >= 12 || drawProgress < 0.999;
+      const sk = document.getElementById('seasKey'); if (sk) sk.hidden = !seasNow; }
+    txt((autoScale ? 'ETH/USD, log scale · auto' : 'ETH/USD, log scale · manual (press Auto to refit)') + '  ·  * = your projection, not a forecast', {x:L, y:16, fill:'var(--muted)', 'font-size':11});
+    xhG = el('g', {'pointer-events':'none'});
+    if (lastPtr) drawCrosshair();
+  }
+  const vAt = y => Math.pow(10, Math.log10(cur.v1) - (y - T)/(H - T - B)*(Math.log10(cur.v1) - Math.log10(cur.v0)));
+  function drawCrosshair(){
+    if (!xhG) return; while (xhG.firstChild) xhG.removeChild(xhG.firstChild);
+    const p = lastPtr; if (!p || p.x < L || p.x > W - R || p.y < T || p.y > H - B || drag) return;
+    const t = cur.t0 + (p.x - L)/(W - L - R)*(cur.t1 - cur.t0), v = vAt(p.y);
+    if (ptrMode === 'cross'){
+    el('line', {x1:p.x, x2:p.x, y1:T, y2:H - B, stroke:'var(--muted)', 'stroke-dasharray':'3 3', 'stroke-width':0.8}, xhG);
+    el('line', {x1:L, x2:W - R, y1:p.y, y2:p.y, stroke:'var(--muted)', 'stroke-dasharray':'3 3', 'stroke-width':0.8}, xhG);
+    const pl = (v >= 1000 ? '$' + Math.round(v).toLocaleString('en-US') : '$' + v.toFixed(v < 1 ? 4 : 2));
+    const pw = pl.length*6.6 + 10;
+    el('rect', {x:L - pw - 2, y:p.y - 9, width:pw, height:18, rx:3, fill:'var(--halving)'}, xhG);
+    txt(pl, {x:L - 7, y:p.y + 4, 'text-anchor':'end', fill:'#0d1320', 'font-size':11, 'font-weight':700, 'font-family':'JetBrains Mono, monospace', style:'stroke:none'}, xhG);
+    const dl = fmtD(dateOf(t)); const dw = dl.length*6.6 + 12;
+    el('rect', {x:p.x - dw/2, y:H - B + 4, width:dw, height:18, rx:3, fill:'var(--halving)'}, xhG);
+    txt(dl, {x:p.x, y:H - B + 17, 'text-anchor':'middle', fill:'#0d1320', 'font-size':11, 'font-weight':700, 'font-family':'JetBrains Mono, monospace', style:'stroke:none'}, xhG);
+    }
+    // snap readout to the nearest close
+    const ser = (cur.t0 >= DATA.daily[0][0]) ? DATA.daily : DATA.weekly;
+    let best = null, bd = 1e9; for (const q of ser){ const d = Math.abs(q[0] - t); if (d < bd){ bd = d; best = q; } }
+    if (best && bd < Math.max(0.03, (cur.t1 - cur.t0)/150)){
+      const bx = X(best[0]), by = Y(best[1]);
+      el('circle', {cx:bx, cy:by, r:4, fill:'none', stroke:'var(--halving)', 'stroke-width':1.6}, xhG);
+      const line1 = fmtD(dateOf(best[0])) + (TODAY.live && best === DATA.daily[DATA.daily.length - 1] ? ' live price' : (ser === DATA.daily ? ' close' : ' week close'));
+      const line2 = usd(best[1]);
+      const mv = showWMA ? wmaAt(best[0]) : null, line3 = mv != null ? '200W MA ' + usd0(mv) : '';
+      const bh = line3 ? 58 : 42;
+      const bw = Math.max(line1.length*6.4, line2.length*8.2, line3.length*6.9) + 18;
+      const rx = p.x + 14 + bw > W - R ? p.x - 14 - bw : p.x + 14, ry = Math.max(T + 4, Math.min(H - B - bh - 4, p.y - 54));
+      el('rect', {x:rx, y:ry, width:bw, height:bh, rx:7, fill:'var(--ink)', stroke:'var(--halving)', 'stroke-width':1, opacity:0.96}, xhG);
+      txt(line1, {x:rx + 9, y:ry + 16, fill:'var(--muted)', 'font-size':11, style:'stroke:none'}, xhG);
+      txt(line2, {x:rx + 9, y:ry + 33, fill:'var(--text)', 'font-size':13, 'font-weight':700, 'font-family':'JetBrains Mono, monospace', style:'stroke:none'}, xhG);
+      if (line3) txt(line3, {x:rx + 9, y:ry + 50, fill:WMA_COL, 'font-size':11.5, 'font-weight':700, 'font-family':'JetBrains Mono, monospace', style:'stroke:none'}, xhG);
+    }
+  }
+
+  // ---------- all bear markets, aligned at the peak ----------
+  const CMP = [
+    {name:'2015', pk:'2015-08-07', pp:3.5366, bt:'2015-10-21', bp:0.4209, col:'#6f7c9a', lab:{dx:8, dy:4, a:'start'}},
+    {name:'2016', pk:'2016-06-17', pp:21.52, bt:'2016-12-06', bp:5.9789, col:'#a5b1c9', lab:{dx:8, dy:14, a:'start'}},
+    {name:'2018', pk:'2018-01-13', pp:1432.88, bt:'2018-12-15', bp:82.83, col:'#c8a7f0', lab:{dx:-8, dy:16, a:'end'}},
+    {name:'2021–22', pk:'2021-11-16', pp:4891.70, bt:'2022-06-18', bp:896.11, col:'#7cc4d6', lab:{dx:-8, dy:-8, a:'end'}}];
+  function renderCompare(){
+    const c = document.getElementById('compare'); while (c.firstChild) c.removeChild(c.firstChild);
+    let CW = 860, CH = 380; const cl = 58, cr = 24, ct = 18, cb = 36;
+    if (c.closest('.chartcard.max')){ const r = c.getBoundingClientRect(); if (r.height > 60){ const asp = r.width / r.height; if (asp >= 860/380) CW = Math.round(380*asp); else CH = Math.round(860/asp); } }
+    c.setAttribute('viewBox', `0 0 ${CW} ${CH}`);
+    const xmax = Math.max(480, S.days + 40);
+    const cx = d => cl + d/xmax*(CW - cl - cr), cy = v => ct + (-v)/100*(CH - ct - cb);
+    let SID = null; const hits = [];   // SID = series the next elements belong to (for hover highlighting)
+    const E = (tag, a) => { const e = document.createElementNS(NS, tag); for (const k in a) e.setAttribute(k, a[k]); if (SID) e.setAttribute('data-s', SID); c.appendChild(e); return e; };
+    const Tx = (s, a) => { const e = E('text', a); e.textContent = s; return e; };
+    // past bottom window
+    E('rect', {x:cx(214), y:ct, width:cx(336) - cx(214), height:CH - ct - cb, fill:'var(--btc)', 'fill-opacity':0.12});
+
+    for (let v = 0; v <= 100; v += 20){ E('line', {x1:cl, x2:CW - cr, y1:cy(-v), y2:cy(-v), stroke:'var(--line)'}); Tx(v === 0 ? '0%' : '−' + v + '%', {x:cl - 8, y:cy(-v) + 4, 'text-anchor':'end', fill:'var(--muted)', 'font-size':11, 'font-family':'JetBrains Mono, monospace'}); }
+    for (let d = 0; d <= xmax; d += 60) Tx(d === 0 ? 'Peak' : 'Day ' + d, {x:cx(d), y:CH - cb + 20, 'text-anchor':'middle', fill:'var(--muted)', 'font-size':11, 'font-family':'JetBrains Mono, monospace'});
+    const series = (t0, t1, src) => src.filter(p => p[0] >= t0 && p[0] <= t1);
+    // ---- collision-aware labels: curves, dots and placed labels are obstacles ----
+    const obs = [];
+    const mark = (x, y, r) => obs.push({x:x - r, y:y - r, w:2*r, h:2*r});
+    const labels = [];
+    function place(lb){
+      const lines = lb.lines || [lb.s], lh = lb.fs + 3, bh = lines.length*lh - 3;
+      const w = Math.max(...lines.map(t => t.length))*lb.fs*0.62, h = lb.fs + 2;
+      let cands = [];
+      for (const r of [14, 26, 40, 56, 74, 94]){
+        cands.push([lb.x + r, lb.y + 4, 'start'], [lb.x - r, lb.y + 4, 'end'],
+                   [lb.x, lb.y - r, 'middle'], [lb.x, lb.y + r + lb.fs*0.6, 'middle'],
+                   [lb.x + r, lb.y - r*0.55, 'start'], [lb.x - r, lb.y - r*0.55, 'end'],
+                   [lb.x + r, lb.y + r*0.55 + lb.fs*0.4, 'start'], [lb.x - r, lb.y + r*0.55 + lb.fs*0.4, 'end']);
+      }
+      if (lb.prefer === 'right') cands = cands.filter(c => c[2] === 'start').concat(cands.filter(c => c[2] !== 'start'));
+      for (const pass of [0, 1]) for (const [x, y, anchor] of cands){
+        const x0 = anchor === 'end' ? x - w : (anchor === 'middle' ? x - w/2 : x), y0 = y - lb.fs;
+        if (x0 < cl + 2 || x0 + w > CW - (lb.prefer === 'right' ? 4 : cr + 2) || y0 < ct + 2 || y0 + bh > CH - cb - 4) continue;
+        if (pass === 0 && obs.some(o => o.x < x0 + w + 4 && o.x + o.w > x0 - 4 && o.y < y0 + bh + 4 && o.y + o.h > y0 - 4)) continue;
+        const ex = anchor === 'end' ? x + 3 : (anchor === 'middle' ? x : x - 3), ey = y - lb.fs/2 + 2;
+        if (Math.hypot(ex - lb.x, ey - lb.y) > 36) E('line', {x1:lb.x, y1:lb.y, x2:ex, y2:ey, stroke:lb.fill, 'stroke-width':0.75, opacity:0.5});
+        if (lines.length === 1) Tx(lb.s, {x, y, 'text-anchor':anchor, fill:lb.fill, 'font-size':lb.fs, 'font-weight':lb.w});
+        else {
+          const t = E('text', {x, y, 'text-anchor':anchor, fill:lb.fill, 'font-size':lb.fs, 'font-weight':lb.w});
+          lines.forEach((s, i) => { const sp = document.createElementNS(NS, 'tspan'); sp.setAttribute('x', x); if (i) sp.setAttribute('dy', lh); sp.textContent = s; t.appendChild(sp); });
+        }
+        obs.push({x:x0, y:y0, w, h:bh + 3});
+        return;
+      }
+      Tx(lb.s, {x:lb.x + 10, y:lb.y - 10, 'text-anchor':'start', fill:lb.fill, 'font-size':lb.fs, 'font-weight':lb.w});
+      obs.push({x:lb.x + 10, y:lb.y - 10 - lb.fs, w, h:lb.fs + 3});
+    }
+    CMP.forEach(b => {
+      const t0 = tOf(U(b.pk)), days = diffDays(U(b.pk), U(b.bt)); const t1 = t0 + Math.min(xmax, days + 45)/365.25;
+      const pts = DATA.cmp[b.name].filter(p => p[0] <= Math.min(xmax, days + 45));
+      SID = b.name; const pd = pts.map((p, i) => (i ? 'L' : 'M') + cx(p[0]).toFixed(1) + ',' + cy(p[1]).toFixed(1)).join(''); hits.push([b.name, pd]);
+      E('path', {d:pd, fill:'none', stroke:b.col, 'stroke-width':1.6, 'stroke-linejoin':'round', opacity:0.9, class:'cline'});
+      pts.forEach(p => mark(cx(p[0]), cy(p[1]), 2));
+      const dd = (b.bp/b.pp - 1)*100;
+      E('circle', {cx:cx(days), cy:cy(dd), r:4, fill:'var(--bear)'}); mark(cx(days), cy(dd), 6);
+      labels.push({pr:3, sid:b.name, s:`${b.name}: ${dd.toFixed(1).replace('-', '−')}% (${days} d)`, x:cx(days), y:cy(dd), fs:11, fill:b.col, w:600});
+      SID = null;
+    });
+    // current bear (daily) through today
+    const t0 = tOf(PEAK.ms);
+    const curPts = [[0, 0]].concat(DATA.daily.filter(p => p[0] >= t0).map(p => [(p[0] - t0)*365.25, (p[1]/PEAK.p - 1)*100]));
+    SID = 'now'; const cd = curPts.map((p, i) => (i ? 'L' : 'M') + cx(p[0]).toFixed(1) + ',' + cy(p[1]).toFixed(1)).join(''); hits.push(['now', cd]);
+    E('path', {d:cd, fill:'none', stroke:'var(--text)', 'stroke-width':2, 'stroke-linejoin':'round', class:'cline'});
+    curPts.forEach((p, i) => { if (i % 2 === 0) mark(cx(p[0]), cy(p[1]), 2); });
+    const lowD = diffDays(PEAK.ms, LOW.ms), lowV = (LOW.p/PEAK.p - 1)*100;
+    E('circle', {cx:cx(lowD), cy:cy(lowV), r:4, fill:'none', stroke:NOW_COL, 'stroke-width':1.6}); mark(cx(lowD), cy(lowV), 6);
+    const nowD = diffDays(PEAK.ms, TODAY.ms), nowV = (TODAY.p/PEAK.p - 1)*100;
+    E('circle', {cx:cx(nowD), cy:cy(nowV), r:5, fill:'var(--btc)', stroke:'var(--ink)', 'stroke-width':2}); mark(cx(nowD), cy(nowV), 7);
+    // your scenario
+    const sx = cx(S.days), sy = cy(-S.dd);
+    E('line', {x1:cx(nowD), y1:cy(nowV), x2:sx, y2:sy, stroke:'var(--btc)', 'stroke-width':1.5, 'stroke-dasharray':'6 5'});
+    for (let k = 0; k <= 8; k++) mark(cx(nowD) + (sx - cx(nowD))*k/8, cy(nowV) + (sy - cy(nowV))*k/8, 2);
+    E('circle', {cx:sx, cy:sy, r:6, fill:'none', stroke:'var(--btc)', 'stroke-width':2}); mark(sx, sy, 8);
+    SID = null;
+    labels.push({pr:0, sid:'now', s:`Today: day ${nowD}, ${nowV.toFixed(1).replace('-', '−')}%`, x:cx(nowD), y:cy(nowV), fs:11.5, fill:'var(--btc)', w:700});
+    labels.push({pr:1, sid:'now', s:`Your scenario: day ${S.days}, −${S.dd.toFixed(1)}%`, lines:['Your scenario', `day ${S.days}, −${S.dd.toFixed(1)}%`], prefer:'right', x:sx, y:sy, fs:11.5, fill:'var(--btc)', w:700});
+    labels.push({pr:2, sid:'now', s:`Low so far: ${lowV.toFixed(1).replace('-', '−')}% (day ${lowD})`, x:cx(lowD), y:cy(lowV), fs:11, fill:NOW_COL, w:600});
+    labels.push({pr:2.5, sid:'now', s:'2025–now (daily)', x:cx(Math.min(nowD, xmax)), y:cy(nowV), fs:11, fill:'var(--text)', w:600});
+    // window caption: one line, centred between the 0% and −20% gridlines
+    { const bx = cx(275), by = (cy(0) + cy(-20))/2;
+      Tx('Cycle bottoms: day 214–336', {x:bx, y:by + 4, 'text-anchor':'middle', fill:'var(--btc)', 'font-size':11, 'font-weight':600});
+      obs.push({x:bx - 105, y:by - 9, w:210, h:18}); }
+    labels.sort((a, b) => a.pr - b.pr).forEach(lb => { SID = lb.sid || null; place(lb); }); SID = null;
+    E('line', {x1:cl, x2:CW - cr, y1:CH - cb, y2:CH - cb, stroke:'var(--line)'});
+    // wide invisible hover targets on top of each line
+    hits.forEach(([sid, d]) => { SID = sid; E('path', {d, fill:'none', stroke:'transparent', 'stroke-width':14, 'stroke-linejoin':'round', 'pointer-events':'stroke', class:'chit'}); }); SID = null;
+    if (cmpHL){ const s = cmpHL; cmpHL = null; setCmpHL(s); }
+  }
+  function setCmpHL(sid){
+    if (sid === cmpHL) return; cmpHL = sid;
+    const c = document.getElementById('compare');
+    if (sid) c.setAttribute('data-hl', sid); else c.removeAttribute('data-hl');
+    c.querySelectorAll('[data-s]').forEach(e => e.classList.toggle('on', e.getAttribute('data-s') === sid));
+    document.querySelectorAll('[data-cmp]').forEach(e => e.classList.toggle('on', e.dataset.cmp === sid));
+    const tb = document.getElementById('tBears'); if (tb) tb.classList.toggle('hl', !!sid);
+  }
+
+  // ---------- numbers + tables ----------
+  const $ = id => document.getElementById(id);
+  function updateText(){
+    const s = scenario();
+    const dToday = diffDays(TODAY.ms, s.bMs);
+    const chipName = {214:'the fastest cycle bear', 275:'the average of the last 2', 286:'the day of the low so far', 336:'the longest cycle bear', 365:'one year'}[S.days];
+    $('bQ').innerHTML = `If this bear market lasts <b>${nf(S.days)} days</b> from the Aug 24, 2025 peak${chipName ? ' (' + chipName + ')' : ''}, and falls <b>${S.dd.toFixed(1).replace(/\.0$/, '')}%</b>:`;
+    const past = dToday < 0;
+    const actual = past ? closeOn(s.bMs) : null;
+    $('bLbl').textContent = past ? 'The bottom would have been on' : 'The bottom would be on';
+    $('bpLbl').textContent = past ? 'At a price of' : 'At a price of';
+    $('bDate').innerHTML = fmtD(s.bMs) + (past ? '<span class="badge">Already passed</span>' : '');
+    $('bDate').classList.toggle('past', false);
+    $('bPrice').textContent = usd(s.bP);
+    $('bPrice').classList.toggle('past', past);
+    if (past){
+      $('bDays').innerHTML = `${nf(-dToday)} days ago · day ${S.days} after the peak`;
+      $('bVs').innerHTML = actual != null ? `<span class="actual">It didn't happen: ETH actually closed at <b>${usd(actual)}</b> that day.</span>` : `<span class="actual">This date has already passed.</span>`;
+    } else {
+      $('bDays').textContent = dToday === 0 ? `That is today · day ${S.days} after the peak` : `${nf(dToday)} days from today · day ${S.days} after the peak`;
+      $('bVs').textContent = `${pct(s.bP/TODAY.p - 1)} vs today's ${usd(TODAY.p)}`;
+    }
+    $('peakBig').style.display = S.showPeak ? '' : 'none';
+    $('pDate').textContent = fmtD(s.pkMs);
+    $('pPrice').textContent = usd0(s.pkP);
+    const flags = [];
+    if (prevDays != null && S.days !== 336) prevDays = null;
+    if (!s.future) flags.push(['warn', `This timing has already passed without that bottom. The lowest price so far is ${usd(LOW.p)} on Jun 6, 2026 (day 286). Even the longest cycle bear (336 days) would have ended on ${fmtD(addDays(PEAK.ms, 336))}, so this bear is already ETH's longest.` + (S.days !== 336 ? `<br><button type="button" class="chip" data-setdays="336">Try 336 days (longest)</button>` : '')]);
+    if (s.bP > LOW.p) flags.push(['warn', `A −${S.dd.toFixed(1)}% bottom (${usd(s.bP)}) is higher than the ${usd(LOW.p)} low already printed on Jun 6, 2026, so the real cycle low would be that earlier one.`]);
+    if (s.future && s.bP <= LOW.p) flags.push(['', `This scenario needs a new low below ${usd(LOW.p)} by ${fmtD(s.bMs)}: a ${pct(s.bP/TODAY.p - 1)} move from today.`]);
+    if (prevDays != null) flags.push(['', `You're trying 336 days, the longest cycle bear.<br><button type="button" class="chip" data-backdays="${prevDays}">↩ Back to ${prevDays} days${prevDays === 275 ? ' (average)' : ''}</button>`]);
+    if (S.showPeak && s.pkP < PEAK.p) flags.push(['', `The projected next peak (${usd0(s.pkP)}) would be below the Aug 24, 2025 peak of ${usd(PEAK.p)}.`]);
+    $('flags').innerHTML = flags.map(([c, m]) => `<div class="flag ${c}">${m}</div>`).join('');
+    $('flags').querySelectorAll('[data-setdays]').forEach(b => b.addEventListener('click', () => { prevDays = S.days; setDays(b.dataset.setdays); }));
+    $('flags').querySelectorAll('[data-backdays]').forEach(b => b.addEventListener('click', () => { const v = Number(b.dataset.backdays); prevDays = null; setDays(v); }));
+    // bears table
+    const avgDays = Math.round((336+214)/2), avgDd = ((1-82.83/1432.88)+(1-896.11/4891.70))/2;   // ETH's two completed cycle bears (2018, 2021–22)
+    const BCOL = {'2015':'#6f7c9a', '2016':'#a5b1c9', '2018':'#c8a7f0', '2021–22':'#7cc4d6', now:'var(--text)'};
+    const G = v => `<span class="tg">${v}</span>`, Rd = v => `<span class="tr">${v}</span>`, O = v => `<span class="to">${v}</span>`;
+    const sw = k => `<i class="tsw" style="background:${BCOL[k]}"></i>`;
+    const nowDays = diffDays(PEAK.ms, TODAY.ms);
+    let h = '<tr><th>Bear market</th><th>Peak</th><th class="n">Peak price</th><th>Bottom</th><th class="n">Bottom price</th><th class="n">Days</th><th class="n">Drop</th></tr>';
+    BEARS.forEach(b => { h += `<tr data-cmp="${b.name}"><td>${sw(b.name)}${b.name}</td><td>${G(fmtD(U(b.pk)))}</td><td class="n">${G(usd(b.pp))}</td><td>${Rd(fmtD(U(b.bt)))}</td><td class="n">${Rd(usd(b.bp))}</td><td class="n">${diffDays(U(b.pk), U(b.bt))}</td><td class="n neg">−${((1-b.bp/b.pp)*100).toFixed(1)}%</td></tr>`; });
+    h += `<tr class="now"><td>${O('Average of the 2 cycle bears (2018, 2021–22)')}</td><td></td><td></td><td></td><td></td><td class="n">${O(avgDays)}</td><td class="n">${O('−' + (avgDd*100).toFixed(1) + '%')}</td></tr>`;
+    h += `<tr class="you" data-cmp="now"><td>${sw('now')}<b>2025–now</b> <span class="pill">so far</span></td><td>${G(fmtD(PEAK.ms))}</td><td class="n">${G(usd(PEAK.p))}</td><td>${Rd(fmtD(LOW.ms))}</td><td class="n">${Rd(usd(LOW.p))}</td><td class="n">${diffDays(PEAK.ms, LOW.ms)}</td><td class="n neg">−${((1-LOW.p/PEAK.p)*100).toFixed(1)}%</td></tr>`;
+    h += `<tr class="you" data-cmp="now"><td><i class="tsw" style="background:var(--btc)"></i><b>Your scenario</b> <span class="pill btc">input</span></td><td>${G(fmtD(PEAK.ms))}</td><td class="n">${G(usd(PEAK.p))}</td><td>${Rd(fmtD(s.bMs))}<span class="ast">*</span></td><td class="n">${Rd(usd(s.bP))}<span class="ast">*</span></td><td class="n">${S.days}${S.days < nowDays ? ' <span class="pill pastp">passed</span>' : ''}</td><td class="n neg">−${S.dd.toFixed(1)}%<span class="ast">*</span></td></tr>`;
+    h += `<tr class="you" data-cmp="now"><td><i class="tsw" style="background:var(--text)"></i><b>Today</b> <span class="pill">actual</span></td><td>${G(fmtD(PEAK.ms))}</td><td class="n">${G(usd(PEAK.p))}</td><td>${fmtD(TODAY.ms)}</td><td class="n"><b>${usd(TODAY.p)}</b></td><td class="n">${O(nowDays)}</td><td class="n neg">−${((1-TODAY.p/PEAK.p)*100).toFixed(1)}%</td></tr>`;
+    $('tBears').innerHTML = h;
+    // timeline
+    $('tlPrice').textContent = usd(TODAY.p);
+    $('ldPrice').textContent = usd(TODAY.p); $('ldDate').textContent = (TODAY.live ? 'ETH live price, ' : 'ETH close, ') + fmtD(TODAY.ms);
+    $('tlDate').textContent = (TODAY.live ? 'ETH live price, ' : 'ETH close, ') + fmtD(TODAY.ms);
+    $('tlSub').innerHTML = `Counted from today, ${fmtD(TODAY.ms)}.<br>Prices after today come from your inputs (marked *).`;
+    // [name, date, price, basis, marker, price colour class]
+    const rows = [
+      ['Cycle peak', PEAK.ms, PEAK.p, 'Actual', 'dot-g', 'tg'],
+      ['Lowest so far', LOW.ms, LOW.p, 'Actual', 'dot-r', 'tr'],
+      ['Today', TODAY.ms, TODAY.p, 'Actual', 'dot-o', 'to'],
+      ['Projected bottom', s.bMs, s.bP, 'Your input', 'ring-o', 'tr'],
+      ['Next halving', s.hMs, null, 'Estimate', 'dash-b', ''],
+    ];
+    if (S.showPeak) rows.push(['Projected next peak', s.pkMs, s.pkP, 'Your input', 'ring-o', 'tg']);
+    rows.sort((a,b) => a[1]-b[1]);
+    const when = dd => dd === 0 ? '<span class="to">Today</span>' : (dd < 0 ? `${nf(-dd)} days ago` : `in ${nf(dd)} days`);
+    const basis = b => b === 'Your input' ? '<span class="to">Your input</span>' : (b === 'Estimate' ? '<span style="color:var(--halving)">Estimate</span>' : 'Actual');
+    let t = '<tr><th>Point</th><th>Date</th><th class="n">When</th><th class="n">Price</th><th class="n">vs today</th><th>Basis</th></tr>';
+    rows.forEach(r => {
+      const dd = diffDays(TODAY.ms, r[1]), proj = r[3] === 'Your input', star = proj ? '<span class="ast">*</span>' : '';
+      const cls = proj ? ' class="you"' : (r[0] === 'Today' ? ' class="now"' : '');
+      const vs = r[2] && r[0] !== 'Today' ? r[2]/TODAY.p - 1 : null;
+      t += `<tr${cls}><td><i class="tmk ${r[4]}"></i>${r[0] === 'Today' ? '<b>Today</b>' : r[0]}</td><td>${fmtD(r[1])}${star}</td>`
+        + `<td class="n">${when(dd)}${proj && dd < 0 ? ' <span class="pill pastp">passed</span>' : ''}</td>`
+        + `<td class="n">${r[2] ? `<span class="${r[5]}">${usd(r[2])}</span>${star}` : '—'}</td>`
+        + `<td class="n">${vs == null ? '—' : `<span class="${vs < 0 ? 'tr' : 'tg'}">${pct(vs)}</span>`}</td><td>${basis(r[3])}</td></tr>`;
+    });
+    $('tTimeline').innerHTML = t;
+    // ladder
+    const steps = [50,55,60,65,69.6,70,75,80,81.7,85,88,90,94.2];
+    if (!steps.some(v => Math.abs(v - S.dd) < 0.05)) steps.push(S.dd);
+    steps.sort((a,b) => a-b);
+    const names = {69.6:'Low so far (Jun 6, 2026)', 81.7:'2021–22 bear', 88:'Avg of last 2', 94.2:'2018 bear'};
+    let l = '<tr><th class="n">Drawdown</th><th class="n">Bottom price</th><th class="n">vs today</th><th class="n">vs low so far</th><th>Bottom date (your days)</th><th>Reference</th></tr>';
+    const nowV = (1 - TODAY.p/PEAK.p)*100, avgV = Math.round(avgDd*1000)/10;
+    const ents = steps.map(v => ({v, p:PEAK.p*(1-v/100), kind:Math.abs(v - S.dd) < 0.05 ? 'you' : 'step'}));
+    ents.push({v:nowV, p:TODAY.p, kind:'now'}); ents.sort((a, b) => a.v - b.v || (a.kind === 'now' ? -1 : 1));
+    // key levels first: the average of the last 2 cycles, today, and your projection
+    const grp = txt => `<tr class="lgrp"><td colspan="6">${txt}</td></tr>`;
+    const avgP = PEAK.p*(1 - avgV/100);
+    l += grp('Key levels');
+    l += `<tr class="nowa"><td class="n neg">−${nowV.toFixed(1)}%</td><td class="n"><b>${usd(TODAY.p)}</b></td><td class="n">—</td><td class="n">${pct(TODAY.p/LOW.p - 1)}</td><td>${fmtD(TODAY.ms)} <span class="pill">today</span></td><td><span style="color:var(--halving);font-weight:600">Today (actual)</span></td></tr>`;
+    l += `<tr class="now"><td class="n">${O('−' + avgV.toFixed(1) + '%')}</td><td class="n">${O(usd(avgP))}</td><td class="n neg">${pct(avgP/TODAY.p - 1)}</td><td class="n neg">${pct(avgP/LOW.p - 1)}</td><td>—</td><td>${O('Average of the last 2 cycles')}</td></tr>`;
+    { const yp = PEAK.p*(1 - S.dd/100);
+      l += `<tr class="you"><td class="n neg">−${S.dd.toFixed(1)}%</td><td class="n"><span class="to">${usd(yp)}</span><span class="ast">*</span></td><td class="n neg">${pct(yp/TODAY.p - 1)}</td><td class="n${yp < LOW.p ? ' neg' : ''}">${pct(yp/LOW.p - 1)}</td><td>${fmtD(s.bMs)}<span class="ast">*</span></td><td><span class="to">Your projection</span></td></tr>`; }
+    l += grp('Every drawdown level <span class="zkey"><i></i>focus zone, −70% to −85%</span>');
+    ents.forEach(({v, p, kind}) => {
+      const you = kind === 'you', now = kind === 'now', st = you ? '<span class="ast">*</span>' : '';
+      // focus zone −50% to −65%: shading deepens from orange to red as the drop gets bigger
+      const zt = v >= 70 - 1e-6 && v <= 85 + 1e-6 ? (v - 70)/15 : null;   // ETH focus zone −70% to −85%
+      const zc = zt == null ? '' : ` style="--zbg:rgba(${Math.round(247 - 8*zt)},${Math.round(147 - 64*zt)},${Math.round(26 + 54*zt)},${(0.15 + 0.13*zt).toFixed(3)})"`;
+      const zcls = [you ? 'lyou' : (now ? 'lnow' : ''), zt == null ? '' : 'zone'].filter(Boolean).join(' ');
+      l += `<tr${zcls ? ` class="${zcls}"` : ''}${zc}><td class="n neg">−${v.toFixed(1)}%</td>`
+        + `<td class="n">${now ? `<b>${usd(p)}</b>` : (you ? `<span class="to">${usd(p)}</span>${st}` : usd(p))}</td>`
+        + `<td class="n${!now && p < TODAY.p ? ' neg' : ''}">${now ? '—' : pct(p/TODAY.p - 1)}</td>`
+        + `<td class="n${p < LOW.p ? ' neg' : ''}">${pct(p/LOW.p - 1)}</td>`
+        + `<td>${now ? fmtD(TODAY.ms) + ' <span class="pill">today</span>' : fmtD(s.bMs) + st}</td>`
+        + `<td>${now ? '<span style="color:var(--halving);font-weight:600">Today (actual)</span>' : (you ? '<span class="to">Your projection</span>' : (names[v] || ''))}</td></tr>`;
+    });
+    $('tLadder').innerHTML = l;
+    renderCompare();
+    const fi = document.getElementById('fsInfo');
+    if (fi){
+      const line = (lbl, price, cls) => {
+        const e = document.createElement('span'), p = document.createElement('b');
+        p.className = cls; p.textContent = price;
+        e.append(lbl, p); return e;
+      };
+      const lines = [line(`Bottom ${fmtD(s.bMs)}, `, `${usd(s.bP)} (−${S.dd.toFixed(1)}%)`, 'fsdn')];
+      if (S.showPeak) lines.push(line(`Next peak ${fmtD(s.pkMs)}, `, usd0(s.pkP), 'fsup'));
+      const hd = document.createElement('i'); hd.className = 'fshd'; hd.textContent = 'Your projection';
+      fi.replaceChildren(hd, ...lines);
+    }
+    // chips
+    [['dayChips', S.days], ['ddChips', S.dd], ['hpChips', S.hp], ['multChips', S.mult]].forEach(([id, v]) => {
+      document.querySelectorAll('#' + id + ' .chip').forEach(c => c.classList.toggle('on', Math.abs(Number(c.dataset.v) - v) < 0.001)); });
+  }
+
+  // ---------- animation ----------
+  let raf = 0, introTimer = 0, speed = 1, autoScale = true, lastPtr = null, xhG = null;
+  let ptrMode = 'cross'; try { if (localStorage.getItem('ethClockPtr') === 'simple') ptrMode = 'simple'; } catch(e){}
+  function animateTo(target, ms){
+    cancelAnimationFrame(raf);
+    const from = shownScn || target; const start = performance.now();
+    if (reduce || !shownScn){ shownScn = target; render(); return; }
+    const lerpLog = (a, b, u) => Math.pow(10, Math.log10(a) + (Math.log10(b) - Math.log10(a))*u);
+    const step = now => {
+      const u = Math.min(1, (now - start)/ms); const e = 1 - Math.pow(1 - u, 3);
+      shownScn = {bMs: from.bMs + (target.bMs - from.bMs)*e, bP: lerpLog(from.bP, target.bP, e), hMs: target.hMs,
+        pkMs: from.pkMs + (target.pkMs - from.pkMs)*e, pkP: lerpLog(from.pkP, target.pkP, e), future: target.future};
+      shownScn.future = shownScn.bMs > TODAY.ms;
+      if (drawProgress >= 1 && projProgress >= 1) cur = viewFor(S.view);
+      render(); if (u < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+  }
+  const TITLES = {full:'Every cycle since 2015, and your projection', c1:'Cycle 1: Oct 2015 bottom → Jan 2018 peak → Dec 2018 bottom',
+    c2:'Cycle 2: Dec 2018 bottom → Nov 2021 peak → Jun 2022 bottom', cycle:'Current cycle and your projection'};
+  function setPressed(name){ document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === name))); }
+  function setTitle(v, view){ const t = (view === 'full' ? 'All cycles: ' : 'Zoomed: ') + fmtD(dateOf(v.t0)) + ' – ' + fmtD(dateOf(v.t1)); const h = $('chartTitle'); if (h.textContent !== t) h.textContent = t; }
+  function viewTo(name, ms, done){
+    S.view = name; setPressed(name); autoScale = true; setAutoBtn();
+    const a = Object.assign({}, cur), b = viewFor(name), start = performance.now(); setTitle(b, name);
+    if (reduce){ cur = Object.assign({}, b); render(); done && done(); return; }
+    cancelAnimationFrame(raf);
+    const step = now => {
+      const u = Math.min(1, (now - start)/ms); const e = u < .5 ? 4*u*u*u : 1 - Math.pow(-2*u + 2, 3)/2;
+      cur = {t0:a.t0 + (b.t0 - a.t0)*e, t1:a.t1 + (b.t1 - a.t1)*e,
+             v0:Math.pow(10, Math.log10(a.v0) + (Math.log10(b.v0) - Math.log10(a.v0))*e),
+             v1:Math.pow(10, Math.log10(a.v1) + (Math.log10(b.v1) - Math.log10(a.v1))*e)};
+      render(); if (u < 1) raf = requestAnimationFrame(step); else done && done();
+    };
+    raf = requestAnimationFrame(step);
+  }
+  function intro(){
+    cancelAnimationFrame(raf); clearTimeout(introTimer); autoScale = true; setAutoBtn();
+    shownScn = scenario();
+    if (reduce){ cur = viewFor('cycle'); S.view = 'cycle'; setPressed('cycle'); setTitle(cur, 'cycle'); drawProgress = 1; projProgress = 1; render(); return; }
+    cur = viewFor('full'); S.view = 'full'; setTitle(cur, 'full'); drawProgress = 0; projProgress = 0;
+    setPressed('full');
+    const start = performance.now(), dur = 4200/speed;
+    const draw = now => {
+      const u = Math.min(1, (now - start)/dur); drawProgress = u; render();
+      if (u < 1) raf = requestAnimationFrame(draw);
+      else introTimer = setTimeout(() => viewTo('cycle', 1500/Math.max(0.25, speed), () => {
+        const s2 = performance.now();
+        const proj = now2 => { const v = Math.min(1, (now2 - s2)/(1300/Math.max(0.25, speed))); projProgress = v; render(); if (v < 1) raf = requestAnimationFrame(proj); };
+        raf = requestAnimationFrame(proj);
+      }), 400/Math.max(0.25, speed));
+    };
+    raf = requestAnimationFrame(draw);
+  }
+
+  // ---------- inputs ----------
+  function bind(rangeId, numId, outId, key, fmt, lim){
+    const r = $(rangeId), n = $(numId), o = $(outId);
+    const set = (v, fromNum) => {
+      v = Number(v); if (!isFinite(v)) return; v = Math.min(lim[1], Math.max(lim[0], v));
+      S[key] = v; o.textContent = fmt(v); if (!fromNum) n.value = v; r.value = Math.min(Number(r.max), Math.max(Number(r.min), v));
+      updateText(); animateTo(scenario(), 450);
+    };
+    r.addEventListener('input', () => set(r.value));
+    n.addEventListener('change', () => set(n.value, true));
+    n.addEventListener('input', () => { if (n.value !== '') set(n.value, true); });
+    return set;
+  }
+  const setDays = bind('days', 'daysNum', 'daysOut', 'days', v => String(Math.round(v)), [1, 1500]);
+  const setDd = bind('dd', 'ddNum', 'ddOut', 'dd', v => '−' + v.toFixed(1) + '%', [1, 99]);
+  const setHp = bind('hp', 'hpNum', 'hpOut', 'hp', v => String(Math.round(v)), [1, 1500]);
+  const setMult = bind('mult', 'multNum', 'multOut', 'mult', v => v.toFixed(1) + '×', [1, 50]);
+  const chipBind = (id, fn) => document.querySelectorAll('#' + id + ' .chip').forEach(c => c.addEventListener('click', () => fn(c.dataset.v)));
+  chipBind('dayChips', setDays); chipBind('ddChips', setDd); chipBind('hpChips', setHp); chipBind('multChips', setMult);
+  $('showPeak').addEventListener('change', e => { S.showPeak = e.target.checked; $('peakCtl').hidden = !S.showPeak; updateText(); render(); });
+  $('halvDate').addEventListener('change', e => { if (e.target.value) { S.halv = e.target.value; updateText(); animateTo(scenario(), 450); } });
+  document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => { cancelAnimationFrame(raf); clearTimeout(introTimer); drawProgress = 1; projProgress = 1; viewTo(b.dataset.view, 1000/Math.max(0.5, speed)); }));
+  $('replay').addEventListener('click', intro);
+
+  // ---------- zoom & pan (TradingView-style) ----------
+  function setAutoBtn(){ const b = document.getElementById('autoBtn'); if (b) b.setAttribute('aria-pressed', String(autoScale)); }
+  function stopIntro(){ cancelAnimationFrame(raf); cancelAnimationFrame(smoothRaf); smoothRaf = 0; clearTimeout(introTimer); drawProgress = 1; projProgress = 1; }
+  function clampT(t0, t1){
+    let span = Math.min(LIM.t1 - LIM.t0, Math.max(LIM.minSpan, t1 - t0));
+    const mid = (t0 + t1)/2; t0 = mid - span/2; t1 = mid + span/2;
+    if (t0 < LIM.t0){ t1 += LIM.t0 - t0; t0 = LIM.t0; }
+    if (t1 > LIM.t1){ t0 -= t1 - LIM.t1; t1 = LIM.t1; }
+    return [t0, t1];
+  }
+  function clampV(v0, v1){
+    let a = Math.log10(v0), b = Math.log10(v1); const span = Math.min(9, Math.max(0.04, b - a)); const mid = (a + b)/2;
+    a = mid - span/2; b = mid + span/2; a = Math.max(-3, a); b = Math.min(8, b); return [Math.pow(10, a), Math.pow(10, b)];
+  }
+  function markCustom(){
+    S.view = 'custom'; setPressed('custom');
+    setTitle(cur, 'custom');
+  }
+  // immediate range change (drag, pinch)
+  function setRange(t0, t1, v0, v1){
+    [t0, t1] = clampT(t0, t1);
+    if (autoScale){ const y = autoY(t0, t1); v0 = y[0]; v1 = y[1]; }
+    else if (v0 === undefined){ v0 = cur.v0; v1 = cur.v1; }
+    [v0, v1] = clampV(v0, v1);
+    cur = {t0, t1, v0, v1}; markCustom(); render();
+  }
+  // eased range change (wheel, buttons): glide toward a target like TradingView's smooth scroll
+  let tgt = null, smoothRaf = 0;
+  function glideTo(t0, t1, v0, v1){
+    [t0, t1] = clampT(t0, t1);
+    if (autoScale){ const y = autoY(t0, t1); v0 = y[0]; v1 = y[1]; }
+    else if (v0 === undefined){ v0 = (tgt || cur).v0; v1 = (tgt || cur).v1; }
+    [v0, v1] = clampV(v0, v1);
+    tgt = {t0, t1, v0, v1};
+    if (reduce){ cur = Object.assign({}, tgt); tgt = null; markCustom(); render(); return; }
+    if (!smoothRaf) smoothRaf = requestAnimationFrame(glideStep);
+  }
+  function glideStep(){
+    const k = 0.3, lg = Math.log10;
+    cur = {t0:cur.t0 + (tgt.t0 - cur.t0)*k, t1:cur.t1 + (tgt.t1 - cur.t1)*k,
+           v0:Math.pow(10, lg(cur.v0) + (lg(tgt.v0) - lg(cur.v0))*k), v1:Math.pow(10, lg(cur.v1) + (lg(tgt.v1) - lg(cur.v1))*k)};
+    const done = Math.abs(cur.t0 - tgt.t0) + Math.abs(cur.t1 - tgt.t1) < 0.0008 && Math.abs(lg(cur.v0) - lg(tgt.v0)) + Math.abs(lg(cur.v1) - lg(tgt.v1)) < 0.001;
+    if (done){ cur = Object.assign({}, tgt); tgt = null; }
+    markCustom(); render();
+    smoothRaf = done ? 0 : requestAnimationFrame(glideStep);
+  }
+  const base = () => tgt || cur;
+  const toSvg = ev => { const r = svg.getBoundingClientRect(); return {x:(ev.clientX - r.left)*W/r.width, y:(ev.clientY - r.top)*H/r.height}; };
+  const region = p => p.x < L ? 'yaxis' : (p.y > H - B ? 'xaxis' : 'plot');
+  const tAtB = x => { const b = base(); return b.t0 + (Math.min(W - R, Math.max(L, x)) - L)/(W - L - R)*(b.t1 - b.t0); };
+  function zoomX(tc, f){ stopIntro(); const b = base(); glideTo(tc - (tc - b.t0)*f, tc + (b.t1 - tc)*f); }
+  function zoomY(vc, f){
+    stopIntro(); autoScale = false; setAutoBtn(); const b = base(), lg = Math.log10, c = lg(vc);
+    glideTo(b.t0, b.t1, Math.pow(10, c - (c - lg(b.v0))*f), Math.pow(10, c + (lg(b.v1) - c)*f));
+  }
+  svg.addEventListener('wheel', ev => {
+    ev.preventDefault();
+    const p = toSvg(ev); const rg = region(p);
+    const norm = v => Math.max(-150, Math.min(150, ev.deltaMode === 1 ? v*16 : (ev.deltaMode === 2 ? v*400 : v)));
+    const dy = norm(ev.deltaY), dx = norm(ev.deltaX);
+    if (rg === 'yaxis'){ zoomY(vAt(Math.min(H - B, Math.max(T, p.y))), Math.exp(dy*0.0022)); return; }
+    if (!ev.ctrlKey && (ev.shiftKey || Math.abs(dx) > Math.abs(dy))){   // sideways swipe or shift+wheel = pan
+      stopIntro(); const b = base(); const d = (ev.shiftKey ? dy : dx)/(W - L - R)*(b.t1 - b.t0); glideTo(b.t0 + d, b.t1 + d); return;
+    }
+    const sens = ev.ctrlKey ? 0.012 : 0.0022;   // ctrl = trackpad pinch
+    if (rg === 'xaxis'){ const b = base(); zoomX(b.t1, Math.exp(dy*sens)); return; }   // date axis: anchor the right edge
+    zoomX(tAtB(p.x), Math.exp(dy*sens));
+  }, {passive:false});
+  const ptrs = new Map(); let drag = null;
+  svg.addEventListener('pointerdown', ev => {
+    stopIntro(); tgt = null; svg.setPointerCapture(ev.pointerId); const p = toSvg(ev); ptrs.set(ev.pointerId, p);
+    drag = {mode:region(p), cur:Object.assign({}, cur), pts:new Map(ptrs)}; svg.classList.add('dragging'); drawCrosshair();
+  });
+  svg.addEventListener('pointermove', ev => {
+    const p = toSvg(ev);
+    if (!drag){
+      lastPtr = p; const rg = region(p);
+      svg.style.cursor = rg === 'yaxis' ? 'ns-resize' : (rg === 'xaxis' ? 'ew-resize' : (ptrMode === 'cross' ? 'crosshair' : 'default'));
+      drawCrosshair(); return;
+    }
+    if (!ptrs.has(ev.pointerId)) return;
+    ptrs.set(ev.pointerId, p);
+    const ids = [...ptrs.keys()], c0 = drag.cur, span0 = c0.t1 - c0.t0, lg = Math.log10;
+    if (ids.length >= 2){
+      const a0 = drag.pts.get(ids[0]), b0 = drag.pts.get(ids[1]), a1 = ptrs.get(ids[0]), b1 = ptrs.get(ids[1]); if (!a0 || !b0) return;
+      const d0 = Math.max(10, Math.abs(a0.x - b0.x)), d1 = Math.max(10, Math.abs(a1.x - b1.x));
+      const tc = c0.t0 + ((a0.x + b0.x)/2 - L)/(W - L - R)*span0, f = d0/d1;
+      setRange(tc - (tc - c0.t0)*f, tc + (c0.t1 - tc)*f); return;
+    }
+    const a = drag.pts.get(ids[0]); if (!a) return;
+    if (drag.mode === 'yaxis'){            // stretch / squash prices around the middle
+      autoScale = false; setAutoBtn();
+      const f = Math.exp((p.y - a.y)*0.006), m = (lg(c0.v0) + lg(c0.v1))/2, h = (lg(c0.v1) - lg(c0.v0))/2*f;
+      setRange(c0.t0, c0.t1, Math.pow(10, m - h), Math.pow(10, m + h));
+    } else if (drag.mode === 'xaxis'){     // TradingView: drag the time axis to zoom, right edge fixed
+      const span = span0*Math.exp((a.x - p.x)*0.006); setRange(c0.t1 - span, c0.t1);
+    } else {                               // pan (diagonal too once the price axis is manual)
+      const dt = (a.x - p.x)/(W - L - R)*span0;
+      if (autoScale) setRange(c0.t0 + dt, c0.t1 + dt);
+      else { const dv = (p.y - a.y)/(H - T - B)*(lg(c0.v1) - lg(c0.v0)); setRange(c0.t0 + dt, c0.t1 + dt, Math.pow(10, lg(c0.v0) + dv), Math.pow(10, lg(c0.v1) + dv)); }
+    }
+  });
+  const endPtr = ev => { ptrs.delete(ev.pointerId); svg.classList.remove('dragging'); drag = ptrs.size ? {mode:'plot', cur:Object.assign({}, cur), pts:new Map(ptrs)} : null; };
+  svg.addEventListener('pointerup', endPtr); svg.addEventListener('pointercancel', endPtr);
+  svg.addEventListener('pointerleave', () => { if (!drag){ lastPtr = null; drawCrosshair(); } });
+  svg.addEventListener('dblclick', ev => {
+    const p = toSvg(ev); stopIntro();
+    if (region(p) === 'yaxis'){ autoScale = true; setAutoBtn(); glideTo(cur.t0, cur.t1); return; }
+    viewTo('cycle', 700);
+  });
+  document.getElementById('zIn').addEventListener('click', () => { const b = base(); zoomX((b.t0 + b.t1)/2, 0.7); });
+  document.getElementById('zOut').addEventListener('click', () => { const b = base(); zoomX((b.t0 + b.t1)/2, 1/0.7); });
+  document.getElementById('autoBtn').addEventListener('click', () => { stopIntro(); autoScale = !autoScale; setAutoBtn(); if (autoScale) glideTo(cur.t0, cur.t1); else render(); });
+  (() => {
+    const btn = document.getElementById('speedBtn'), menu = document.getElementById('speedMenu'), val = document.getElementById('speedVal');
+    const opts = [...menu.querySelectorAll('[role=option]')];
+    let act = -1;
+    const isOpen = () => menu.classList.contains('open');
+    const setAct = i => { act = i; opts.forEach((o, j) => o.classList.toggle('act', j === i)); };
+    const show = o => {
+      menu.classList.toggle('open', o); btn.setAttribute('aria-expanded', String(o));
+      if (o){ setAct(opts.findIndex(x => x.getAttribute('aria-selected') === 'true')); menu.focus({preventScroll: true}); }
+      else setAct(-1);
+    };
+    const pick = o => {
+      opts.forEach(x => x.setAttribute('aria-selected', String(x === o)));
+      val.textContent = o.textContent; speed = Number(o.dataset.v);
+      show(false); btn.focus({preventScroll: true}); intro();
+    };
+    btn.addEventListener('click', e => { e.stopPropagation(); show(!isOpen()); });
+    btn.addEventListener('keydown', e => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){ e.preventDefault(); e.stopPropagation(); show(true); } });
+    opts.forEach((o, i) => { o.addEventListener('click', e => { e.stopPropagation(); pick(o); }); o.addEventListener('mousemove', () => { if (act !== i) setAct(i); }); });
+    menu.addEventListener('keydown', e => {
+      const k = e.key;
+      if (k === 'ArrowDown'){ setAct(Math.min(opts.length - 1, act + 1)); }
+      else if (k === 'ArrowUp'){ setAct(Math.max(0, act - 1)); }
+      else if (k === 'Home'){ setAct(0); }
+      else if (k === 'End'){ setAct(opts.length - 1); }
+      else if (k === 'Enter' || k === ' '){ if (act >= 0) pick(opts[act]); }
+      else if (k === 'Escape' || k === 'Tab'){ show(false); btn.focus({preventScroll: true}); }
+      else return;
+      e.preventDefault(); e.stopPropagation();
+    });
+    document.addEventListener('pointerdown', e => { if (isOpen() && !btn.contains(e.target) && !menu.contains(e.target)) show(false); });
+  })();
+  const setPtrBtns = () => document.querySelectorAll('[data-ptr]').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.ptr === ptrMode)));
+  document.querySelectorAll('[data-ptr]').forEach(b => b.addEventListener('click', () => {
+    ptrMode = b.dataset.ptr; try { localStorage.setItem('ethClockPtr', ptrMode); } catch(e){}
+    setPtrBtns(); drawCrosshair();
+  }));
+  setPtrBtns();
+  const setWmaBtn = () => { $('wmaBtn').setAttribute('aria-pressed', String(showWMA)); $('wmaKey').hidden = !showWMA; };
+  $('wmaBtn').addEventListener('click', () => {
+    showWMA = !showWMA; try { localStorage.setItem('ethClockWMA', showWMA ? '1' : '0'); } catch(e){}
+    setWmaBtn(); if (autoScale) glideTo(cur.t0, cur.t1); else render();
+  });
+  setWmaBtn();
+  { const cs = document.getElementById('compare');
+    cs.addEventListener('pointerover', e => { const t = e.target.closest && e.target.closest('[data-s]'); setCmpHL(t ? t.getAttribute('data-s') : null); });
+    cs.addEventListener('pointerleave', () => setCmpHL(null));
+    // hover card naming the cycle under the pointer
+    const cc = document.getElementById('cmpCard'), tip = document.createElement('div'); tip.className = 'cmptip'; tip.hidden = true; cc.appendChild(tip);
+    const pctDrop = (lo, hi) => '−' + ((1 - lo/hi)*100).toFixed(1) + '%';
+    const FULL = {'2015':'2015 launch crash', '2016':'2016 DAO', '2018':'2018', '2021–22':'2021–2022'};
+    const tipHTML = sid => {
+      if (sid === 'now') return `<div class="tt"><i style="background:var(--text)"></i><b>2025–now</b><span>this cycle</span></div>`;
+      const c = CMP.find(x => x.name === sid); if (!c) return '';
+      return `<div class="tt"><i style="background:${c.col}"></i><b style="color:${c.col}">${FULL[c.name] || c.name}</b><span>bear market</span></div>`;
+    };
+    let tipSid = null;
+    cs.addEventListener('pointermove', e => {
+      const t = e.target.closest && e.target.closest('[data-s]');
+      if (!t){ tip.hidden = true; tipSid = null; return; }
+      const sid = t.getAttribute('data-s'); if (sid !== tipSid){ tip.innerHTML = tipHTML(sid); tipSid = sid; }
+      tip.hidden = false;
+      const r = cc.getBoundingClientRect(), tw = tip.offsetWidth, th = tip.offsetHeight;
+      let x = e.clientX - r.left + 14, y = e.clientY - r.top - th - 14;
+      if (x + tw > r.width - 8) x = e.clientX - r.left - tw - 14;
+      if (y < 8) y = e.clientY - r.top + 18;
+      tip.style.left = Math.max(8, x) + 'px'; tip.style.top = Math.max(8, y) + 'px';
+    });
+    cs.addEventListener('pointerleave', () => { tip.hidden = true; tipSid = null; });
+    document.querySelectorAll('.seckey [data-cmp]').forEach(k => { k.addEventListener('pointerenter', () => setCmpHL(k.dataset.cmp)); k.addEventListener('pointerleave', () => setCmpHL(null)); });
+    const tb = document.getElementById('tBears');
+    tb.addEventListener('pointerover', e => { const r = e.target.closest('tr[data-cmp]'); setCmpHL(r ? r.dataset.cmp : null); });
+    tb.addEventListener('pointerleave', () => setCmpHL(null)); }
+  const xp = [['ddBtn', 'ddPanel'], ['dayBtn', 'dayPanel'], ['halvBtn', 'halvPanel']].map(([b, p]) => [document.getElementById(b), document.getElementById(p)]);
+  const setXp = (pan, o) => { pan.classList.toggle('open', o); pan.setAttribute('aria-hidden', String(!o)); };
+  xp.forEach(([btn, pan]) => btn.addEventListener('click', () => {
+    const o = !pan.classList.contains('open');
+    xp.forEach(([b2, p2]) => { setXp(p2, false); b2.setAttribute('aria-expanded', 'false'); });
+    setXp(pan, o); btn.setAttribute('aria-expanded', String(o));
+  }));
+  svg.setAttribute('tabindex', '0');
+  svg.addEventListener('keydown', ev => {
+    const b = base(), span = b.t1 - b.t0;
+    if (ev.key === '+' || ev.key === '=') zoomX((b.t0 + b.t1)/2, 0.8);
+    else if (ev.key === '-') zoomX((b.t0 + b.t1)/2, 1.25);
+    else if (ev.key === 'ArrowLeft') { stopIntro(); glideTo(b.t0 - span*0.1, b.t1 - span*0.1); }
+    else if (ev.key === 'ArrowRight') { stopIntro(); glideTo(b.t0 + span*0.1, b.t1 + span*0.1); }
+    else if (ev.key === 'ArrowUp') zoomY(vAt((T + H - B)/2), 0.85);
+    else if (ev.key === 'ArrowDown') zoomY(vAt((T + H - B)/2), 1/0.85);
+    else return; ev.preventDefault();
+  });
+
+  // ---------- full screen (TradingView-style maximize) ----------
+  const card = document.getElementById('chartCard'), fsBtn = document.getElementById('fsBtn');
+  let isMax = false;
+  function fitChart(){
+    if (isMax){
+      const r = svg.getBoundingClientRect();
+      W = Math.max(860, Math.round(600 * r.width / Math.max(240, r.height)));
+    } else W = 860;
+    H = 600; svg.setAttribute('viewBox', `0 0 ${W} ${H}`); render();
+  }
+  function setMax(on){
+    if (on === isMax) return;
+    isMax = on; card.classList.toggle('max', on); document.body.classList.toggle('fs-lock', on);
+    fsBtn.setAttribute('aria-pressed', String(on)); fsBtn.textContent = on ? '✕ Exit full screen' : '⤢ Full screen';
+    requestAnimationFrame(fitChart);
+  }
+  function toggleFull(){
+    if (!isMax){
+      setMax(true);   // always maximize inside the page; real full screen on top when the browser allows it
+      try { const pr = card.requestFullscreen ? card.requestFullscreen() : (card.webkitRequestFullscreen && card.webkitRequestFullscreen()); if (pr && pr.catch) pr.catch(() => {}); } catch(e) {}
+    } else {
+      try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch(e) {}
+      setMax(false);
+    }
+  }
+  fsBtn.addEventListener('click', toggleFull);
+  // full screen for each table card
+  let tMax = null;
+  function setTMax(card){
+    if (tMax && tMax !== card){ tMax.classList.remove('tmax'); const ob = tMax.querySelector('.tfs'); ob.textContent = '⤢ Full screen'; ob.setAttribute('aria-pressed', 'false'); }
+    tMax = card;
+    document.querySelectorAll('.tcard').forEach(c => { const on = c === card; c.classList.toggle('tmax', on); const b = c.querySelector('.tfs'); if (b){ b.textContent = on ? '✕ Exit full screen' : '⤢ Full screen'; b.setAttribute('aria-pressed', String(on)); } });
+    document.body.classList.toggle('fs-lock', !!card || isMax);
+    if (!card){ try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch(e) {} }
+  }
+  document.querySelectorAll('.tcard').forEach(card => {
+    if (!card.querySelector('table')) return;
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'replay fsbtn tfs'; b.textContent = '⤢ Full screen'; b.title = 'Full screen · Esc to exit'; b.setAttribute('aria-pressed', 'false');
+    b.addEventListener('click', () => {
+      if (tMax !== card){
+        setTMax(card);
+        try { const pr = card.requestFullscreen ? card.requestFullscreen() : (card.webkitRequestFullscreen && card.webkitRequestFullscreen()); if (pr && pr.catch) pr.catch(() => {}); } catch(e) {}
+      } else {
+        try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch(e) {}
+        setTMax(null);
+      }
+    });
+    card.appendChild(b);
+  });
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && tMax) setTMax(null); });
+  // full screen for the bear-market comparison chart
+  let cmpMax = false; const cmpCard = document.getElementById('cmpCard'), cmpFsBtn = document.getElementById('cmpFsBtn');
+  function setCmpMax(on){
+    if (on === cmpMax) return; cmpMax = on;
+    cmpCard.classList.toggle('max', on); document.body.classList.toggle('fs-lock', on || isMax);
+    cmpFsBtn.setAttribute('aria-pressed', String(on)); cmpFsBtn.textContent = on ? '✕ Exit full screen' : '⤢ Full screen';
+    requestAnimationFrame(renderCompare);
+  }
+  cmpFsBtn.addEventListener('click', () => {
+    if (!cmpMax){
+      setCmpMax(true);
+      try { const pr = cmpCard.requestFullscreen ? cmpCard.requestFullscreen() : (cmpCard.webkitRequestFullscreen && cmpCard.webkitRequestFullscreen()); if (pr && pr.catch) pr.catch(() => {}); } catch(e) {}
+    } else {
+      try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch(e) {}
+      setCmpMax(false);
+    }
+  });
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && cmpMax) setCmpMax(false); else if (cmpMax) requestAnimationFrame(renderCompare); });
+  window.addEventListener('resize', () => { if (cmpMax) renderCompare(); });
+  document.getElementById('seasBtn').addEventListener('click', e => {
+    stopIntro(); seasonsOn = !seasonsOn; e.currentTarget.setAttribute('aria-pressed', String(seasonsOn));
+    if (autoScale) glideTo(cur.t0, cur.t1); else render();
+  });
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && isMax) setMax(false); else if (isMax) requestAnimationFrame(fitChart); });
+  document.addEventListener('keydown', ev => {
+    if (ev.key === 'Escape' && tMax){ setTMax(null); }
+    else if (ev.key === 'Escape' && cmpMax){ setCmpMax(false); }
+    else if (ev.key === 'Escape' && isMax){ setMax(false); }
+    else if ((ev.key === 'f' || ev.key === 'F') && !cmpMax && !tMax && !/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || '')) { ev.preventDefault(); toggleFull(); }
+  });
+  window.addEventListener('resize', () => { if (isMax) fitChart(); });
+
+  // restore inputs (if a snapshot restored S)
+  setDays(S.days); setDd(S.dd); setHp(S.hp); setMult(S.mult);
+  $('showPeak').checked = S.showPeak; $('peakCtl').hidden = !S.showPeak; $('halvDate').value = S.halv;
+  updateText();
+  cur = viewFor('cycle'); shownScn = scenario(); render();   // complete resting frame first
+  intro();
+})();
+</script>
+</body>
+</html>
