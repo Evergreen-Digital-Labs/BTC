@@ -84,6 +84,12 @@ b[data-cmp]:hover,b[data-cmp].on{border-bottom-color:currentColor}
 .tr{color:var(--bear);font-weight:600}
 .to{color:var(--btc);font-weight:700}
 tr.nowa td{background:rgba(106,166,255,.10)}
+tr.zone td{background:var(--zbg)}
+tr.zone td:first-child{box-shadow:inset 3px 0 0 rgba(239,83,80,.55)}
+tr.zone.lyou td:first-child{box-shadow:inset 3px 0 0 var(--btc)}
+tr.zone.lnow td:first-child{box-shadow:inset 3px 0 0 var(--halving)}
+.zkey{margin-left:14px;font-weight:600;letter-spacing:.04em;text-transform:none;color:var(--muted)}
+.zkey i{display:inline-block;width:34px;height:9px;border-radius:3px;margin-right:7px;vertical-align:-1px;background:linear-gradient(90deg,rgba(247,147,26,.35),rgba(239,83,80,.6))}
 tr.lgrp td{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding-top:14px;padding-bottom:6px;background:none!important;box-shadow:none!important}
 tr.lyou td:first-child{box-shadow:inset 3px 0 0 rgba(247,147,26,.6)}
 tr.lnow td:first-child{box-shadow:inset 3px 0 0 rgba(106,166,255,.6)}
@@ -1120,10 +1126,14 @@ const DATA = {"weekly":[[2010.5421,0.08],[2010.5613,0.07],[2010.5804,0.06],[2010
     l += `<tr class="now"><td class="n">${O('−' + avgV.toFixed(1) + '%')}</td><td class="n">${O(usd(avgP))}</td><td class="n neg">${pct(avgP/TODAY.p - 1)}</td><td class="n neg">${pct(avgP/LOW.p - 1)}</td><td>—</td><td>${O('Average of the last 3 cycles')}</td></tr>`;
     { const yp = PEAK.p*(1 - S.dd/100);
       l += `<tr class="you"><td class="n neg">−${S.dd.toFixed(1)}%</td><td class="n"><span class="to">${usd(yp)}</span><span class="ast">*</span></td><td class="n neg">${pct(yp/TODAY.p - 1)}</td><td class="n${yp < LOW.p ? ' neg' : ''}">${pct(yp/LOW.p - 1)}</td><td>${fmtD(s.bMs)}<span class="ast">*</span></td><td><span class="to">Your projection</span></td></tr>`; }
-    l += grp('Every drawdown level');
+    l += grp('Every drawdown level <span class="zkey"><i></i>focus zone, −50% to −65%</span>');
     ents.forEach(({v, p, kind}) => {
       const you = kind === 'you', now = kind === 'now', st = you ? '<span class="ast">*</span>' : '';
-      l += `<tr${you ? ' class="lyou"' : (now ? ' class="lnow"' : '')}><td class="n neg">−${v.toFixed(1)}%</td>`
+      // focus zone −50% to −65%: shading deepens from orange to red as the drop gets bigger
+      const zt = v >= 50 - 1e-6 && v <= 65 + 1e-6 ? (v - 50)/15 : null;
+      const zc = zt == null ? '' : ` style="--zbg:rgba(${Math.round(247 - 8*zt)},${Math.round(147 - 64*zt)},${Math.round(26 + 54*zt)},${(0.15 + 0.13*zt).toFixed(3)})"`;
+      const zcls = [you ? 'lyou' : (now ? 'lnow' : ''), zt == null ? '' : 'zone'].filter(Boolean).join(' ');
+      l += `<tr${zcls ? ` class="${zcls}"` : ''}${zc}><td class="n neg">−${v.toFixed(1)}%</td>`
         + `<td class="n">${now ? `<b>${usd(p)}</b>` : (you ? `<span class="to">${usd(p)}</span>${st}` : usd(p))}</td>`
         + `<td class="n${!now && p < TODAY.p ? ' neg' : ''}">${now ? '—' : pct(p/TODAY.p - 1)}</td>`
         + `<td class="n${p < LOW.p ? ' neg' : ''}">${pct(p/LOW.p - 1)}</td>`
