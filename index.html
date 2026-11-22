@@ -97,6 +97,8 @@ tr.lnow td:first-child{box-shadow:inset 3px 0 0 rgba(106,166,255,.6)}
 tr.nowa td:first-child{box-shadow:inset 3px 0 0 var(--halving)}
 .pill.pastp{color:var(--bear);border-color:rgba(239,83,80,.55);font-family:var(--body)}
 .ast{margin-left:2px}
+.tview{margin:2px 0 12px}
+.tview button{font-size:12px}
 .tsw{display:inline-block;width:14px;height:4px;border-radius:2px;margin-right:9px;vertical-align:middle}
 #tBears tr[data-cmp]{cursor:pointer}
 #tBears tr td{transition:background .18s ease,opacity .18s ease}
@@ -479,9 +481,10 @@ footer b{color:var(--text);font-weight:600}
 
   <section class="tables">
     <div class="card tcard">
-      <h3>Every bear market, and yours</h3>
-      <p>Peak intraday high to bottom intraday low. Your scenario uses the inputs above.</p>
-      <div class="tscroll"><table id="tBears"></table></div>
+      <h3 id="tBearsTitle">Every bear market, and yours</h3>
+      <p id="tBearsSub">Peak intraday high to bottom intraday low. Your scenario uses the inputs above.</p>
+      <div class="tviewwrap"><div class="seg tview" role="group" aria-label="Table view"><button type="button" data-tv="bear" aria-pressed="true">Bear markets · peak → bottom</button><button type="button" data-tv="bull" aria-pressed="false">Bull runs · bottom → peak</button></div></div>
+      <div class="tscroll"><table id="tBears"></table><table id="tRally" class="hovt" hidden></table></div>
     </div>
     <div class="card tcard">
       <div class="tchead">
@@ -1081,6 +1084,20 @@ const DATA = {"weekly":[[2010.5421,0.08],[2010.5613,0.07],[2010.5804,0.06],[2010
     h += `<tr class="you" data-cmp="now"><td><i class="tsw" style="background:var(--btc)"></i><b>Your scenario</b> <span class="pill btc">input</span></td><td>${G(fmtD(PEAK.ms))}</td><td class="n">${G(usd(PEAK.p))}</td><td>${Rd(fmtD(s.bMs))}<span class="ast">*</span></td><td class="n">${Rd(usd(s.bP))}<span class="ast">*</span></td><td class="n">${S.days}${S.days < nowDays ? ' <span class="pill pastp">passed</span>' : ''}</td><td class="n neg">−${S.dd.toFixed(1)}%<span class="ast">*</span></td></tr>`;
     h += `<tr class="you" data-cmp="now"><td><i class="tsw" style="background:var(--text)"></i><b>Today</b> <span class="pill">actual</span></td><td>${G(fmtD(PEAK.ms))}</td><td class="n">${G(usd(PEAK.p))}</td><td>${fmtD(TODAY.ms)}</td><td class="n"><b>${usd(TODAY.p)}</b></td><td class="n">${O(nowDays)}</td><td class="n neg">−${((1-TODAY.p/PEAK.p)*100).toFixed(1)}%</td></tr>`;
     $('tBears').innerHTML = h;
+    // bull runs: each cycle bottom (intraday low) to the next cycle peak (intraday high)
+    const RALLY = [['2011', '2011-11-22', 1.9163, '2013-11-30', 1156.14], ['2013–15', '2015-01-14', 171.51, '2017-12-17', 20089.00],
+                   ['2017–18', '2018-12-15', 3191.30, '2021-11-10', 68789.63], ['2021–22', '2022-11-21', 15599.05, '2025-10-06', 126198.07]];
+    const mx = v => (v >= 100 ? nf(Math.round(v)) : v.toFixed(1)) + '×';
+    const rDays = RALLY.map(r => diffDays(U(r[1]), U(r[3])));
+    const avgR = Math.round((rDays[1] + rDays[2] + rDays[3])/3);
+    let hr = '<tr><th>Bear market</th><th>Bottom</th><th class="n">Bottom price</th><th>Top</th><th class="n">Top price</th><th class="n">Total days</th><th class="n">Return multiple</th></tr>';
+    RALLY.forEach((r, i) => { hr += `<tr><td>${sw(r[0])}${r[0]}</td><td>${Rd(fmtD(U(r[1])))}</td><td class="n">${Rd(usd(r[2]))}</td><td>${G(fmtD(U(r[3])))}</td><td class="n">${G(usd(r[4]))}</td><td class="n">${nf(rDays[i])}</td><td class="n"><b>${mx(r[4]/r[2])}</b></td></tr>`; });
+    hr += `<tr class="now"><td>${O('Average of the last 3 bull runs')}</td><td></td><td></td><td></td><td></td><td class="n">${O(nf(avgR))}</td><td class="n" style="color:var(--muted)">shrinks every cycle</td></tr>`;
+    const sinceLow = diffDays(LOW.ms, TODAY.ms);
+    hr += `<tr class="you"><td>${sw('now')}<b>2025–now</b> <span class="pill">so far</span></td><td>${Rd(fmtD(LOW.ms))}</td><td class="n">${Rd(usd(LOW.p))}</td><td style="color:var(--muted)">?</td><td class="n" style="color:var(--muted)">?</td><td class="n">${sinceLow === 0 ? 'low is today' : nf(sinceLow) + ' so far'}</td><td class="n">${(TODAY.p/LOW.p).toFixed(2)}× so far</td></tr>`;
+    const pjDays = diffDays(LOW.ms, s.pkMs);
+    hr += `<tr class="you"><td><i class="tsw" style="background:var(--btc)"></i><b>Your projection</b> <span class="pill btc">input</span></td><td>${Rd(fmtD(LOW.ms))}</td><td class="n">${Rd(usd(LOW.p))}</td><td>${G(fmtD(s.pkMs))}<span class="ast">*</span></td><td class="n">${G(usd0(LOW.p*S.mult))}<span class="ast">*</span></td><td class="n">${nf(pjDays)}<span class="ast">*</span></td><td class="n">${S.mult}×<span class="ast">*</span></td></tr>`;
+    $('tRally').innerHTML = hr;
     // timeline
     $('tlPrice').textContent = usd(TODAY.p);
     $('ldPrice').textContent = usd(TODAY.p); $('ldDate').textContent = (TODAY.live ? 'BTC live price, ' : 'BTC close, ') + fmtD(TODAY.ms);
@@ -1469,6 +1486,16 @@ const DATA = {"weekly":[[2010.5421,0.08],[2010.5613,0.07],[2010.5804,0.06],[2010
     }
   }
   fsBtn.addEventListener('click', toggleFull);
+  // bear / bull view toggle on the first table
+  let tView = 'bear';
+  document.querySelectorAll('.tview button').forEach(b => b.addEventListener('click', () => {
+    tView = b.dataset.tv;
+    document.querySelectorAll('.tview button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    const bull = tView === 'bull';
+    $('tBears').hidden = bull; $('tRally').hidden = !bull;
+    $('tBearsTitle').textContent = bull ? 'Every bull run, bottom to peak' : 'Every bear market, and yours';
+    $('tBearsSub').textContent = bull ? 'Cycle bottom (intraday low) to the next cycle peak (intraday high). Return multiple = top ÷ bottom. Your projection starts from the low so far and uses your next-peak inputs above.' : 'Peak intraday high to bottom intraday low. Your scenario uses the inputs above.';
+  }));
   // full screen for each table card
   let tMax = null;
   function setTMax(card){
